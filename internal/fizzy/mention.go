@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -34,12 +35,7 @@ func MentionedUserIDs(html string) []string {
 }
 
 func Mentions(html, userID string) bool {
-	for _, id := range MentionedUserIDs(html) {
-		if id == userID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(MentionedUserIDs(html), userID)
 }
 
 // userIDFromSGID reads the payload of a Rails signed global id. It does not

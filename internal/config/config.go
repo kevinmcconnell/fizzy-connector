@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"text/template"
@@ -152,12 +153,7 @@ func (c *Config) validate() error {
 }
 
 func (c *Config) IsTrusted(userID string) bool {
-	for _, id := range c.TrustedUserIDs {
-		if id == userID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.TrustedUserIDs, userID)
 }
 
 var unsafeNamePattern = regexp.MustCompile(`[^A-Za-z0-9.]+`)

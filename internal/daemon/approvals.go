@@ -37,7 +37,7 @@ var toolNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 // mentions. A sentence such as "yes, but wait" is not an answer.
 func parseApprovalAnswer(plainText string) (approvalAnswer, string) {
 	var words []string
-	for _, word := range strings.Fields(plainText) {
+	for word := range strings.FieldsSeq(plainText) {
 		if !strings.HasPrefix(word, "@") || len(words) > 0 {
 			words = append(words, word)
 		}

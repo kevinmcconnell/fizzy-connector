@@ -320,7 +320,7 @@ func TestANotificationForADeletedCardIsDropped(t *testing.T) {
 func TestTrimLogKeepsTheNewestLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "card.log")
 	var content strings.Builder
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		fmt.Fprintf(&content, "line %04d\n", i)
 	}
 	require.NoError(t, os.WriteFile(path, []byte(content.String()), 0o600))

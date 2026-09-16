@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,12 +75,7 @@ func (s *CardState) RecordTurn(record TurnRecord) {
 }
 
 func (s *CardState) IsHandled(triggerID string) bool {
-	for _, id := range s.Handled {
-		if id == triggerID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.Handled, triggerID)
 }
 
 type Store struct {

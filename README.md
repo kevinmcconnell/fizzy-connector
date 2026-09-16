@@ -205,11 +205,13 @@ in Fizzy, and the daemon handles them at the next start.
 ## Tests
 
 ```sh
-go test ./...
+make build    # the binary goes to bin/
+make test
+make lint     # needs golangci-lint
 FIZZY_CONNECTOR_REAL_CLAUDE=1 go test ./internal/daemon -run TestRealClaude
 ```
 
-The second command runs one turn with the real `claude` command and your
+The last command runs one turn with the real `claude` command and your
 Claude login, against a fake Fizzy server.
 
 For manual end-to-end tests against a Fizzy development server, see

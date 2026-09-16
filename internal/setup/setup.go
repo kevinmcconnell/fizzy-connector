@@ -297,7 +297,7 @@ func magicLinkLogin(ctx context.Context, p *prompter, baseURL, email string) (st
 	}
 	token, err := client.SubmitMagicLink(ctx, link.PendingToken, strings.ToUpper(code))
 	if err != nil {
-		return "", fmt.Errorf("Fizzy did not accept the code: %w", err)
+		return "", fmt.Errorf("the code was not accepted by Fizzy: %w", err)
 	}
 	return token, nil
 }
@@ -307,7 +307,7 @@ func magicLinkLogin(ctx context.Context, p *prompter, baseURL, email string) (st
 func chooseAccount(ctx context.Context, p *prompter, client *fizzy.Client, slug string) (*fizzy.Account, error) {
 	identity, err := client.Identity(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Fizzy did not accept the login: %w", err)
+		return nil, fmt.Errorf("the login was not accepted by Fizzy: %w", err)
 	}
 	if slug != "" {
 		for i, account := range identity.Accounts {
@@ -367,7 +367,7 @@ func chooseTrustedUsers(ctx context.Context, p *prompter, client *fizzy.Client, 
 		}
 		var ids []string
 		valid := true
-		for _, field := range strings.Split(answer, ",") {
+		for field := range strings.SplitSeq(answer, ",") {
 			n, convErr := strconv.Atoi(strings.TrimSpace(field))
 			if convErr != nil || n < 1 || n > len(candidates) {
 				valid = false
