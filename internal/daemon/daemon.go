@@ -39,6 +39,10 @@ type Daemon struct {
 	logger  *slog.Logger
 	lock    *os.File
 	runCtx  context.Context
+	// drain ends when the daemon must start no more turns. The turns that
+	// run finish first, unless the context of Run ends too.
+	drain     context.Context
+	stopDrain context.CancelFunc
 
 	mcpCommand string
 
@@ -106,19 +110,41 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer listener.Close()
 	d.runCtx = ctx
+	d.mu.Lock()
+	d.drain, d.stopDrain = context.WithCancel(ctx)
+	d.mu.Unlock()
+	defer d.stopDrain()
 	go ipc.Serve(listener, d.handleIPC)
 
 	if err := d.resumeQueues(ctx); err != nil {
 		return err
 	}
-	go d.watchCable(ctx)
+	go d.watchCable(d.drain)
 
 	d.logger.Info("watching for mentions", "permission_mode", d.cfg.PermissionMode, "user", d.botName, "fizzy", d.cfg.BaseURL, "repo", d.cfg.Repo)
-	d.fetchLoop(ctx)
+	d.fetchLoop(d.drain)
 
-	d.logger.Info("stopping: waiting for the active turns to stop")
+	if ctx.Err() == nil {
+		d.logger.Info("stopping: the turns that run finish first. Stop again to end them now", "turns", d.activeTurns())
+	}
 	d.workers.Wait()
 	return nil
+}
+
+// Drain makes the daemon stop after the turns that run now. Mentions stay
+// unread in Fizzy for the next start.
+func (d *Daemon) Drain() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopDrain != nil {
+		d.stopDrain()
+	}
+}
+
+func (d *Daemon) activeTurns() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.turns)
 }
 
 func (d *Daemon) identify(ctx context.Context) error {
@@ -220,7 +246,7 @@ func (d *Daemon) resumeQueues(ctx context.Context) error {
 		}
 		if len(state.Queue) > 0 || state.PendingReply != "" {
 			d.logger.Info("continuing queued work", "card", state.Number)
-			d.kick(ctx, state.Number)
+			d.kick(state.Number)
 		}
 	}
 	return nil
@@ -366,13 +392,21 @@ func (d *Daemon) checkCard(ctx context.Context, number int, evidence *mentionEvi
 		return err
 	}
 
-	if id, ok := unprovableDescription(d.cfg, state, card, evidence); ok {
-		if err := d.explainLongDescription(ctx, number, id); err != nil {
+	trustedBoard := false
+	if longDescriptionMention(d.cfg, card, evidence) {
+		members, err := d.client.BoardMembers(ctx, card.Board.ID)
+		if err != nil {
 			return err
+		}
+		trustedBoard = onlyTrustedMembers(d.cfg, members)
+		if id := descriptionID("long-description", card.Description); !trustedBoard && !state.IsHandled(id) {
+			if err := d.explainLongDescription(ctx, number, id); err != nil {
+				return err
+			}
 		}
 	}
 
-	triggers := findTriggers(d.cfg, state, card, comments, evidence, d.approvalPending(number))
+	triggers := findTriggers(d.cfg, state, card, comments, evidence, trustedBoard, d.approvalPending(number))
 	if len(triggers) == 0 {
 		return nil
 	}
@@ -404,12 +438,12 @@ func (d *Daemon) checkCard(ctx context.Context, number int, evidence *mentionEvi
 		d.acknowledge(ctx, number, trigger.item)
 	}
 	if queued {
-		d.kick(ctx, number)
+		d.kick(number)
 	}
 	return nil
 }
 
-const longDescriptionNotice = "I see a mention in the description of this card. The description is longer than 200 characters, and all people with board access can edit a description, so I cannot confirm who wrote all of it. Mention me in a comment, and I will do the work."
+const longDescriptionNotice = "I see a mention in the description of this card. The description is longer than 200 characters, and this board has people who are not in my trusted list. All of them can edit a description, so I cannot confirm who wrote all of it. Mention me in a comment, and I will do the work."
 
 func (d *Daemon) explainLongDescription(ctx context.Context, number int, id string) error {
 	if _, err := d.client.CreateComment(ctx, number, fizzy.MarkdownToHTML(longDescriptionNotice)); err != nil {
@@ -490,7 +524,7 @@ func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 		return err
 	}
 	d.logger.Info("agent message queued", "from_card", t.card, "to_card", request.ToCard)
-	d.kick(d.runCtx, request.ToCard)
+	d.kick(request.ToCard)
 	return nil
 }
 

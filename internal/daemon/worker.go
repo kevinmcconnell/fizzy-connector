@@ -23,8 +23,10 @@ const (
 	maxLogSize = 20 << 20
 )
 
-// kick makes sure that one worker processes the queue of the card.
-func (d *Daemon) kick(ctx context.Context, number int) {
+// kick makes sure that one worker processes the queue of the card. The
+// worker lives as long as the daemon runs, not as long as the fetch that
+// found the mention.
+func (d *Daemon) kick(number int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.running[number] {
@@ -32,7 +34,7 @@ func (d *Daemon) kick(ctx context.Context, number int) {
 	}
 	d.running[number] = true
 	d.workers.Add(1)
-	go d.work(ctx, number)
+	go d.work(d.runCtx, number)
 }
 
 func (d *Daemon) work(ctx context.Context, number int) {
@@ -65,7 +67,7 @@ func (d *Daemon) finishIfIdle(ctx context.Context, number int) bool {
 	defer d.mu.Unlock()
 
 	state, err := d.store.Get(number)
-	if ctx.Err() != nil || err != nil || (len(state.Queue) == 0 && state.PendingReply == "") {
+	if ctx.Err() != nil || d.drain.Err() != nil || err != nil || (len(state.Queue) == 0 && state.PendingReply == "") {
 		delete(d.running, number)
 		return true
 	}
@@ -104,7 +106,9 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 	for _, item := range items {
 		hops = max(hops, item.Hops)
 	}
-	turnCtx, cancel := context.WithTimeout(ctx, d.cfg.TurnTimeout.Duration)
+	started := time.Now()
+	deadline := started.Add(d.cfg.TurnTimeout.Duration)
+	turnCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	token, t, err := d.beginTurn(turnCtx, number, hops)
 	if err != nil {
@@ -112,14 +116,14 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 	}
 	defer d.endTurn(token)
 
-	started := time.Now()
 	d.logger.Info("turn started", "card", number, "session", state.SessionID, "resume", state.SessionStarted)
 
-	result, presentedUpTo, runErr := d.runClaude(turnCtx, t, state, card, comments, items)
+	renewed := false
+	result, presentedUpTo, runErr := d.runClaude(turnCtx, t, state, card, comments, items, deadline)
 	if runErr != nil && state.SessionStarted && !result.SessionStarted && ctx.Err() == nil && !errors.Is(runErr, claude.ErrNotStarted) {
 		d.logger.Warn("session not found: starting a new session with the full card", "card", number)
-		state.SessionID, state.SessionStarted = uuid.NewString(), false
-		result, presentedUpTo, runErr = d.runClaude(turnCtx, t, state, card, comments, items)
+		state.SessionID, state.SessionStarted, renewed = uuid.NewString(), false, true
+		result, presentedUpTo, runErr = d.runClaude(turnCtx, t, state, card, comments, items, deadline)
 	}
 	replied := d.endTurn(token)
 	if ctx.Err() != nil {
@@ -134,14 +138,17 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 
 	pendingReply := ""
 	if !replied && hasHumanTrigger(items) {
-		pendingReply = fallbackReply(result, runErr)
+		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
 	}
 
 	saved, err := d.store.Update(number, func(saved *store.CardState) {
 		saved.PendingReply = pendingReply
 		saved.Queue = saved.Queue[len(items):]
-		saved.SessionID = state.SessionID
-		saved.SessionStarted = state.SessionStarted || result.SessionStarted
+		// A reset during the turn keeps its new session.
+		if renewed || saved.SessionID == state.SessionID {
+			saved.SessionID = state.SessionID
+			saved.SessionStarted = state.SessionStarted || result.SessionStarted
+		}
 		saved.LastTurnAt = time.Now()
 		saved.RecordTurn(store.TurnRecord{
 			At:               started,
@@ -153,6 +160,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 			CacheWriteTokens: result.Usage.CacheWriteTokens,
 			CacheReadTokens:  result.Usage.CacheReadTokens,
 			OutputTokens:     result.Usage.OutputTokens,
+			ContextTokens:    result.Usage.ContextTokens,
 		})
 		saved.PromptedUntil = presentedUpTo
 	})
@@ -176,7 +184,7 @@ func (d *Daemon) deliverPendingReply(ctx context.Context, state *store.CardState
 	return err
 }
 
-func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, items []store.Item) (claude.Result, time.Time, error) {
+func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, items []store.Item, deadline time.Time) (claude.Result, time.Time, error) {
 	prompt, presentedUpTo := buildPrompt(promptInput{
 		card:         card,
 		comments:     comments,
@@ -210,6 +218,11 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		ToolTimeout:    d.cfg.TurnTimeout.Duration,
 		Log:            logFile,
 		Model:          d.cfg.Model,
+		Deadline:       deadline,
+		WarnAt:         deadline.Add(-warningBefore(d.cfg.TurnTimeout.Duration)),
+		HookCommand:    d.mcpCommand,
+		HookArgs:       []string{"turn-hook"},
+		TranscriptFile: t.tokenFile + ".transcript",
 	}
 	result, err := turn.Run(ctx)
 	return result, presentedUpTo, err
@@ -225,10 +238,19 @@ func MCPArgs(configPath string, card int, socketPath, tokenFile string) []string
 	return args
 }
 
+// warningBefore is how long before the deadline Claude hears that the turn
+// ends: a tenth of the timeout, between two and ten minutes.
+func warningBefore(timeout time.Duration) time.Duration {
+	return min(max(timeout/10, 2*time.Minute), 10*time.Minute)
+}
+
 // fallbackReply makes sure that each mention from a person gets an answer,
 // also when Claude did not call the reply tool.
-func fallbackReply(result claude.Result, runErr error) string {
+func fallbackReply(result claude.Result, runErr error, timeout time.Duration) string {
 	switch {
+	case errors.Is(runErr, context.DeadlineExceeded):
+		return fmt.Sprintf("The turn timeout of %s stopped this turn after %d API calls. "+
+			"Work that was committed or written to disk is kept. Mention me again to continue.", timeout, result.Usage.APICalls)
 	case runErr != nil:
 		return fmt.Sprintf("I could not complete this request: `%s`", runErr)
 	case result.IsError:

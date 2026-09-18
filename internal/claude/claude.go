@@ -36,6 +36,16 @@ type Turn struct {
 	ToolTimeout    time.Duration
 	Model          string
 	Log            io.Writer
+
+	// HookCommand runs the hook of the turn after each tool call. It is
+	// empty when the turn has no hook. Deadline is when the turn is stopped,
+	// and from WarnAt on the hook tells Claude how much time is left.
+	// TranscriptFile is where the hook records the transcript path.
+	HookCommand    string
+	HookArgs       []string
+	Deadline       time.Time
+	WarnAt         time.Time
+	TranscriptFile string
 }
 
 type Result struct {
@@ -45,8 +55,11 @@ type Result struct {
 	Usage          Usage
 }
 
-// Usage is what Claude Code reports at the end of a turn. The cost is an
-// estimate at API prices.
+// Usage is the sum of the API calls of a turn, subagents included. It comes
+// from the messages in the stream, so a turn that was stopped has its usage
+// too. ContextTokens is the size of the last call of the main thread: the
+// history that each later call sends again. The cost is an estimate at API
+// prices.
 type Usage struct {
 	CostUSD          float64
 	APICalls         int
@@ -54,21 +67,38 @@ type Usage struct {
 	CacheWriteTokens int
 	CacheReadTokens  int
 	OutputTokens     int
+	ContextTokens    int
 }
 
+type tokens struct {
+	InputTokens      int `json:"input_tokens"`
+	CacheWriteTokens int `json:"cache_creation_input_tokens"`
+	CacheReadTokens  int `json:"cache_read_input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+}
+
+func (t tokens) context() int { return t.InputTokens + t.CacheWriteTokens + t.CacheReadTokens }
+
 type event struct {
-	Type     string  `json:"type"`
-	Subtype  string  `json:"subtype"`
-	Result   string  `json:"result"`
-	IsError  bool    `json:"is_error"`
-	CostUSD  float64 `json:"total_cost_usd"`
-	NumTurns int     `json:"num_turns"`
-	Usage    struct {
-		InputTokens      int `json:"input_tokens"`
-		CacheWriteTokens int `json:"cache_creation_input_tokens"`
-		CacheReadTokens  int `json:"cache_read_input_tokens"`
-		OutputTokens     int `json:"output_tokens"`
-	} `json:"usage"`
+	Type            string  `json:"type"`
+	Subtype         string  `json:"subtype"`
+	Result          string  `json:"result"`
+	IsError         bool    `json:"is_error"`
+	CostUSD         float64 `json:"total_cost_usd"`
+	ParentToolUseID *string `json:"parent_tool_use_id"`
+	Message         struct {
+		ID    string `json:"id"`
+		Model string `json:"model"`
+		Usage tokens `json:"usage"`
+	} `json:"message"`
+}
+
+// One API call arrives as several assistant events, one for each content
+// block, with the same message id.
+type call struct {
+	model    string
+	subagent bool
+	tokens   tokens
 }
 
 func (t Turn) mcpConfig() string {
@@ -119,7 +149,18 @@ func (t Turn) Args() []string {
 	if t.Model != "" {
 		args = append(args, "--model", t.Model)
 	}
+	if t.HookCommand != "" {
+		args = append(args, "--settings", t.hookSettings())
+	}
 	return args
+}
+
+func (t Turn) hookSettings() string {
+	hook := map[string]any{"type": "command", "command": t.HookCommand, "args": t.HookArgs, "timeout": 10}
+	encoded, _ := json.Marshal(map[string]any{
+		"hooks": map[string]any{"PostToolUse": []any{map[string]any{"hooks": []any{hook}}}},
+	})
+	return string(encoded)
 }
 
 // ErrNotStarted means that the claude process did not start.
@@ -136,6 +177,14 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	cmd.Stdout = outputWriter
 	cmd.Stderr = t.Log
 	cmd.Env = append(os.Environ(), fmt.Sprintf("MCP_TOOL_TIMEOUT=%d", t.ToolTimeout.Milliseconds()))
+	if !t.Deadline.IsZero() {
+		cmd.Env = append(cmd.Env,
+			DeadlineVar+"="+t.Deadline.Format(time.RFC3339),
+			WarnAtVar+"="+t.WarnAt.Format(time.RFC3339))
+	}
+	if t.TranscriptFile != "" {
+		cmd.Env = append(cmd.Env, TranscriptFileVar+"="+t.TranscriptFile)
+	}
 
 	// The turn gets its own process group, so that a stop also ends the
 	// commands that Claude started.
@@ -147,11 +196,12 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	}
 	cmd.WaitDelay = stopGrace + 5*time.Second
 
+	started := time.Now()
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrNotStarted, err)
 	}
 
-	parsed := make(chan Result, 1)
+	parsed := make(chan stream, 1)
 	go func() { parsed <- parseStream(output, t.Log) }()
 
 	waitErr := cmd.Wait()
@@ -159,7 +209,15 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	// the turn.
 	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	outputWriter.Close()
-	result := <-parsed
+	parsedStream := <-parsed
+	result := parsedStream.result
+	// The transcript has the exact output tokens of each call. The stream
+	// has them only in the result event.
+	calls := t.transcriptCalls(started)
+	if len(calls) < len(parsedStream.calls) {
+		calls = parsedStream.calls
+	}
+	result.Usage = sumUsage(calls, parsedStream.resultCost)
 
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("turn stopped: %w", ctx.Err())
@@ -170,9 +228,18 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
-func parseStream(stream io.Reader, log io.Writer) Result {
+type stream struct {
+	result     Result
+	calls      []call
+	resultCost float64
+}
+
+func parseStream(input io.Reader, log io.Writer) stream {
 	var result Result
-	scanner := bufio.NewScanner(stream)
+	var calls []call
+	index := map[string]int{}
+	resultCost := 0.0
+	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 0, 1<<20), 64<<20)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -185,19 +252,47 @@ func parseStream(stream io.Reader, log io.Writer) Result {
 		switch {
 		case ev.Type == "system" && ev.Subtype == "init":
 			result.SessionStarted = true
+		case ev.Type == "assistant" && ev.Message.ID != "":
+			c := call{model: ev.Message.Model, subagent: ev.ParentToolUseID != nil, tokens: ev.Message.Usage}
+			if i, seen := index[ev.Message.ID]; seen {
+				calls[i] = c
+			} else {
+				index[ev.Message.ID] = len(calls)
+				calls = append(calls, c)
+			}
 		case ev.Type == "result":
+			// A process can report more than one result, when a background
+			// task of Claude ends and starts another turn. The cost of a
+			// result is the total so far.
 			result.Text = ev.Result
 			result.IsError = ev.IsError
-			result.Usage = Usage{
-				CostUSD:          ev.CostUSD,
-				APICalls:         ev.NumTurns,
-				InputTokens:      ev.Usage.InputTokens,
-				CacheWriteTokens: ev.Usage.CacheWriteTokens,
-				CacheReadTokens:  ev.Usage.CacheReadTokens,
-				OutputTokens:     ev.Usage.OutputTokens,
-			}
+			resultCost = max(resultCost, ev.CostUSD)
 		}
 	}
-	io.Copy(io.Discard, stream)
-	return result
+	io.Copy(io.Discard, input)
+	return stream{result: result, calls: calls, resultCost: resultCost}
+}
+
+// sumUsage adds the calls up. The cost that Claude Code reports covers the
+// calls up to its last result; the estimate from the calls covers a turn
+// that was stopped, or that went on after the result.
+func sumUsage(calls []call, resultCost float64) Usage {
+	var usage Usage
+	estimate := 0.0
+	for _, c := range calls {
+		if c.tokens == (tokens{}) {
+			continue
+		}
+		usage.APICalls++
+		usage.InputTokens += c.tokens.InputTokens
+		usage.CacheWriteTokens += c.tokens.CacheWriteTokens
+		usage.CacheReadTokens += c.tokens.CacheReadTokens
+		usage.OutputTokens += c.tokens.OutputTokens
+		estimate += priceOf(c.model).cost(c.tokens)
+		if !c.subagent && c.tokens.context() > 0 {
+			usage.ContextTokens = c.tokens.context()
+		}
+	}
+	usage.CostUSD = max(resultCost, estimate)
+	return usage
 }

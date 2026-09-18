@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ type fakeFizzy struct {
 	descriptions  map[int]string
 	notifications []fizzy.Notification
 	reactions     []string
+	members       []string
 	nextID        int
 }
 
@@ -129,7 +131,14 @@ func (f *fakeFizzy) unreadCount() int {
 	return count
 }
 
+func (f *fakeFizzy) setMembers(userIDs ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.members = userIDs
+}
+
 var (
+	accessesPath = regexp.MustCompile(`^/1/boards/(\w+)/accesses$`)
 	cardPath     = regexp.MustCompile(`^/1/cards/(\d+)$`)
 	cardReaction = regexp.MustCompile(`^/1/cards/(\d+)/reactions$`)
 	commentsPath = regexp.MustCompile(`^/1/cards/(\d+)/comments$`)
@@ -165,7 +174,10 @@ func (f *fakeFizzy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(fizzy.Card{
 			Number: number, Title: "Card " + strconv.Itoa(number), Creator: fizzy.User{ID: trustedID},
 			Description: fizzy.PlainText(f.descriptions[number]), DescriptionHTML: f.descriptions[number],
+			Board: fizzy.Board{ID: "b1", Name: "Board"},
 		})
+	case accessesPath.MatchString(path):
+		f.serveAccesses(w, r)
 	case commentsPath.MatchString(path):
 		number, _ := strconv.Atoi(commentsPath.FindStringSubmatch(path)[1])
 		if r.Method == http.MethodGet {
@@ -198,8 +210,31 @@ func (f *fakeFizzy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveAccesses lists all users of the account, one user for each page, like
+// Fizzy lists them with a Link header for the next page.
+func (f *fakeFizzy) serveAccesses(w http.ResponseWriter, r *http.Request) {
+	users := []string{botID, trustedID, untrustedID}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	page = max(page, 1)
+	if page < len(users) {
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?page=%d>; rel="next"`, r.Host, r.URL.Path, page+1))
+	}
+	user := users[page-1]
+	access := fizzy.BoardAccess{HasAccess: slices.Contains(f.members, user)}
+	access.ID, access.Name = user, user
+	json.NewEncoder(w).Encode(map[string]any{
+		"board_id":   "b1",
+		"all_access": false,
+		"users":      []fizzy.BoardAccess{access},
+	})
+}
+
 func newFakeFizzy() *fakeFizzy {
-	return &fakeFizzy{comments: map[int][]fizzy.Comment{}, descriptions: map[int]string{}}
+	return &fakeFizzy{
+		comments:     map[int][]fizzy.Comment{},
+		descriptions: map[int]string{},
+		members:      []string{botID, trustedID, untrustedID},
+	}
 }
 
 const (
@@ -362,6 +397,34 @@ func TestALongDescriptionGetsANoticeAndNoTurn(t *testing.T) {
 	assert.NoFileExists(t, claudeLog, "a description that cannot be proved started a turn")
 }
 
+func TestALongDescriptionCountsWhenAllBoardMembersAreTrusted(t *testing.T) {
+	fake, server := newTestServer(t)
+	fake.setMembers(botID, trustedID)
+	fake.describe(1, trustedID, strings.Repeat("a long description ", 20))
+	_, claudeLog := startDaemon(t, server)
+
+	waitFor(t, "answer on card 1", func() bool { return len(fake.botComments(1)) == 1 })
+	assert.Contains(t, fake.botComments(1)[0], "answer card 1")
+	assert.FileExists(t, claudeLog)
+	waitFor(t, "all notifications read", func() bool { return fake.unreadCount() == 0 })
+
+	fake.setMembers(botID, trustedID, untrustedID)
+	fake.describe(2, trustedID, strings.Repeat("another long description ", 20))
+	waitFor(t, "notice on card 2", func() bool { return len(fake.botComments(2)) == 1 })
+	assert.Contains(t, fake.botComments(2)[0], "longer than 200 characters")
+}
+
+func TestOnlyTrustedMembers(t *testing.T) {
+	cfg := &config.Config{BotUserID: botID, TrustedUserIDs: []string{trustedID}}
+	user := func(id string) fizzy.User { return fizzy.User{ID: id} }
+
+	assert.True(t, onlyTrustedMembers(cfg, []fizzy.User{user(botID), user(trustedID)}))
+	assert.True(t, onlyTrustedMembers(cfg, []fizzy.User{user(trustedID)}))
+	assert.False(t, onlyTrustedMembers(cfg, []fizzy.User{user(botID), user(trustedID), user(untrustedID)}))
+	assert.False(t, onlyTrustedMembers(cfg, []fizzy.User{user(botID)}), "a board with nobody else proves nothing")
+	assert.False(t, onlyTrustedMembers(cfg, nil))
+}
+
 func TestAgentMessagesNeedTheTokenOfATurn(t *testing.T) {
 	fake, server := newTestServer(t)
 	d, _ := startDaemon(t, server)
@@ -410,4 +473,32 @@ func TestRealClaude(t *testing.T) {
 	assert.Len(t, fake.botComments(7), 1)
 	assert.Contains(t, string(log), "mcp__fizzy__reply", "the answer did not come from the reply tool")
 	t.Logf("answer: %s", fake.botComments(7)[0])
+}
+
+// The slow fake claude takes a second, so that a stop can arrive during a turn.
+const slowFakeClaude = `#!/bin/sh
+echo "$@" >> "$FAKE_CLAUDE_LOG"
+cat > /dev/null
+echo '{"type":"system","subtype":"init"}'
+sleep 1
+echo '{"type":"result","is_error":false,"result":"slow answer"}'
+`
+
+func TestADrainLetsTheRunningTurnFinish(t *testing.T) {
+	fake, server := newTestServer(t)
+	script := filepath.Join(t.TempDir(), "claude")
+	require.NoError(t, os.WriteFile(script, []byte(slowFakeClaude), 0o755))
+	d, claudeLog := startDaemonWith(t, server, script, "")
+
+	fake.mention(7, trustedID)
+	waitFor(t, "the turn to start", func() bool {
+		log, _ := os.ReadFile(claudeLog)
+		return len(log) > 0
+	})
+	d.Drain()
+	fake.mention(8, trustedID)
+
+	require.Eventually(t, func() bool { return len(fake.botComments(7)) == 1 }, 5*time.Second, 50*time.Millisecond)
+	assert.Contains(t, fake.botComments(7)[0], "slow answer")
+	assert.Empty(t, fake.botComments(8), "a mention after the drain started a turn")
 }

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -62,6 +64,7 @@ type TurnRecord struct {
 	CacheWriteTokens int       `json:"cache_write_tokens"`
 	CacheReadTokens  int       `json:"cache_read_tokens"`
 	OutputTokens     int       `json:"output_tokens"`
+	ContextTokens    int       `json:"context_tokens,omitempty"`
 }
 
 // RecordTurn adds to the totals, and keeps the newest turns in detail.
@@ -72,6 +75,13 @@ func (s *CardState) RecordTurn(record TurnRecord) {
 	if len(s.Turns) > maxTurnRecords {
 		s.Turns = s.Turns[len(s.Turns)-maxTurnRecords:]
 	}
+}
+
+// ResetSession makes the next turn start a new session with the full card.
+func (s *CardState) ResetSession() {
+	s.SessionID = uuid.NewString()
+	s.SessionStarted = false
+	s.PromptedUntil = time.Time{}
 }
 
 func (s *CardState) IsHandled(triggerID string) bool {
