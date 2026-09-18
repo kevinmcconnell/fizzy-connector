@@ -92,9 +92,11 @@ card description has no author, because all people with board access can edit
 it. So a mention in a description counts only when the Fizzy notification
 proves the complete text: it names a trusted user as the person who made the
 mention, and its text is the same as the description. Fizzy cuts that text at
-200 characters. For a longer description, Claude posts a comment that asks for
-a mention in a comment. The turn uses the text that was proved, and not a
-later state of the description. A comment is the reliable way to give work to
+200 characters. A longer description counts when every person with access to
+the board is in `trusted_user_ids`: then only trusted people can have edited
+it. On a board with other people, Claude posts a comment that asks for a
+mention in a comment. The turn uses the text that was proved, and not a later
+state of the description. A comment is the reliable way to give work to
 Claude.
 
 **What a session sees.** Each prompt is a JSON document that the connector

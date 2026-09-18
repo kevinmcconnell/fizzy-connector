@@ -142,12 +142,16 @@ func getAll[T any](ctx context.Context, c *Client, fullURL string) ([]T, error) 
 		}
 		all = append(all, page...)
 
-		fullURL = ""
-		if match := nextLinkPattern.FindStringSubmatch(res.header.Get("Link")); match != nil {
-			fullURL = match[1]
-		}
+		fullURL = nextLink(res.header)
 	}
 	return all, nil
+}
+
+func nextLink(header http.Header) string {
+	if match := nextLinkPattern.FindStringSubmatch(header.Get("Link")); match != nil {
+		return match[1]
+	}
+	return ""
 }
 
 func (c *Client) Identity(ctx context.Context) (*Identity, error) {
@@ -161,6 +165,33 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 
 func (c *Client) Boards(ctx context.Context) ([]Board, error) {
 	return getAll[Board](ctx, c, c.accountURL("/boards"))
+}
+
+// BoardMembers returns the users who have access to a board. The accesses
+// endpoint lists all active users of the account, one page at a time, with a
+// flag for each.
+func (c *Client) BoardMembers(ctx context.Context, boardID string) ([]User, error) {
+	var members []User
+	fullURL := c.accountURL("/boards/" + boardID + "/accesses")
+	for fullURL != "" {
+		res, err := c.do(ctx, http.MethodGet, fullURL, nil, "")
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Users []BoardAccess `json:"users"`
+		}
+		if err := json.Unmarshal(res.body, &page); err != nil {
+			return nil, err
+		}
+		for _, access := range page.Users {
+			if access.HasAccess {
+				members = append(members, access.User)
+			}
+		}
+		fullURL = nextLink(res.header)
+	}
+	return members, nil
 }
 
 // Notifications returns the first page, which has all unread items first.

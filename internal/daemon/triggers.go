@@ -54,11 +54,12 @@ func descriptionID(prefix, plainText string) string {
 //
 // The author of a comment comes from the API. A description has no author:
 // all people with board access can edit it. So a mention in a description
-// counts only when the notification proves the complete text. The queue item
+// counts when the notification proves the complete text, or when it proves
+// the start and only trusted people can edit the description. The queue item
 // keeps that text, and the turn uses it and not a later state of the card.
 // While a permission question is open, a mention that answers it is not a
 // trigger.
-func findTriggers(cfg *config.Config, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, evidence *mentionEvidence, approvalPending bool) []trigger {
+func findTriggers(cfg *config.Config, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, evidence *mentionEvidence, trustedBoard, approvalPending bool) []trigger {
 	var triggers []trigger
 
 	add := func(item store.Item, html string, author fizzy.User) {
@@ -69,7 +70,7 @@ func findTriggers(cfg *config.Config, state *store.CardState, card *fizzy.Card, 
 		triggers = append(triggers, trigger{item: item, author: author, trusted: cfg.IsTrusted(author.ID)})
 	}
 
-	if evidence != nil && evidence.provesAll(card.Description) {
+	if evidence != nil && (evidence.provesAll(card.Description) || trustedBoard && evidence.provesStartOf(card.Description)) {
 		add(store.Item{
 			Kind:      store.KindDescription,
 			TriggerID: descriptionID(store.DescriptionTriggerID, card.Description),
@@ -85,14 +86,26 @@ func findTriggers(cfg *config.Config, state *store.CardState, card *fizzy.Card, 
 	return triggers
 }
 
-// unprovableDescription returns an id when a trusted person mentioned the bot
-// in a description that is too long to prove. The daemon then tells the
-// person to use a comment.
-func unprovableDescription(cfg *config.Config, state *store.CardState, card *fizzy.Card, evidence *mentionEvidence) (string, bool) {
-	if evidence == nil || !cfg.IsTrusted(evidence.mentioner.ID) || !evidence.provesStartOf(card.Description) ||
-		!fizzy.Mentions(card.DescriptionHTML, cfg.BotUserID) {
-		return "", false
+// longDescriptionMention reports that a trusted person mentioned the bot in
+// a description that is too long for the notification to prove.
+func longDescriptionMention(cfg *config.Config, card *fizzy.Card, evidence *mentionEvidence) bool {
+	return evidence != nil && cfg.IsTrusted(evidence.mentioner.ID) && evidence.provesStartOf(card.Description) &&
+		fizzy.Mentions(card.DescriptionHTML, cfg.BotUserID)
+}
+
+// onlyTrustedMembers reports a board where each person who can edit a
+// description is trusted. The bot itself does not count: it has no tool that
+// edits a description.
+func onlyTrustedMembers(cfg *config.Config, members []fizzy.User) bool {
+	people := 0
+	for _, member := range members {
+		if member.ID == cfg.BotUserID {
+			continue
+		}
+		if !cfg.IsTrusted(member.ID) {
+			return false
+		}
+		people++
 	}
-	id := descriptionID("long-description", card.Description)
-	return id, !state.IsHandled(id)
+	return people > 0
 }

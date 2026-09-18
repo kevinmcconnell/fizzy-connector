@@ -366,13 +366,21 @@ func (d *Daemon) checkCard(ctx context.Context, number int, evidence *mentionEvi
 		return err
 	}
 
-	if id, ok := unprovableDescription(d.cfg, state, card, evidence); ok {
-		if err := d.explainLongDescription(ctx, number, id); err != nil {
+	trustedBoard := false
+	if longDescriptionMention(d.cfg, card, evidence) {
+		members, err := d.client.BoardMembers(ctx, card.Board.ID)
+		if err != nil {
 			return err
+		}
+		trustedBoard = onlyTrustedMembers(d.cfg, members)
+		if id := descriptionID("long-description", card.Description); !trustedBoard && !state.IsHandled(id) {
+			if err := d.explainLongDescription(ctx, number, id); err != nil {
+				return err
+			}
 		}
 	}
 
-	triggers := findTriggers(d.cfg, state, card, comments, evidence, d.approvalPending(number))
+	triggers := findTriggers(d.cfg, state, card, comments, evidence, trustedBoard, d.approvalPending(number))
 	if len(triggers) == 0 {
 		return nil
 	}
@@ -409,7 +417,7 @@ func (d *Daemon) checkCard(ctx context.Context, number int, evidence *mentionEvi
 	return nil
 }
 
-const longDescriptionNotice = "I see a mention in the description of this card. The description is longer than 200 characters, and all people with board access can edit a description, so I cannot confirm who wrote all of it. Mention me in a comment, and I will do the work."
+const longDescriptionNotice = "I see a mention in the description of this card. The description is longer than 200 characters, and this board has people who are not in my trusted list. All of them can edit a description, so I cannot confirm who wrote all of it. Mention me in a comment, and I will do the work."
 
 func (d *Daemon) explainLongDescription(ctx context.Context, number int, id string) error {
 	if _, err := d.client.CreateComment(ctx, number, fizzy.MarkdownToHTML(longDescriptionNotice)); err != nil {
