@@ -99,6 +99,13 @@ mention in a comment. The turn uses the text that was proved, and not a later
 state of the description. A comment is the reliable way to give work to
 Claude.
 
+Future work: the connector cannot see when a description was edited, or by
+whom, because the Fizzy API has no field or event for it. A
+`description_updated_at` field on the card, or a `card_description_changed`
+event with its creator, would let the connector accept a long description
+when nobody edited it after the mention. This is a change in Fizzy, and it
+needs discussion first.
+
 **What a session sees.** Each prompt is a JSON document that the connector
 makes. It lists the requests of the turn, and it has only the comments from
 trusted people. Titles, names and text are string values in that document, so
