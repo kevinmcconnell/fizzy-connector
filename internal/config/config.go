@@ -26,13 +26,14 @@ type Config struct {
 	BotUserID      string   `toml:"bot_user_id"`
 	TrustedUserIDs []string `toml:"trusted_user_ids"`
 
-	Repo           string   `toml:"repo"`
-	ClaudePath     string   `toml:"claude_path"`
-	Model          string   `toml:"model"`
-	PermissionMode string   `toml:"permission_mode"`
-	AllowedTools   []string `toml:"allowed_tools"`
-	AddDirs        []string `toml:"add_dirs"`
-	Approvals      bool     `toml:"approvals"`
+	Repo            string   `toml:"repo"`
+	ClaudePath      string   `toml:"claude_path"`
+	ClaudeConfigDir string   `toml:"claude_config_dir"`
+	Model           string   `toml:"model"`
+	PermissionMode  string   `toml:"permission_mode"`
+	AllowedTools    []string `toml:"allowed_tools"`
+	AddDirs         []string `toml:"add_dirs"`
+	Approvals       bool     `toml:"approvals"`
 
 	MaxConcurrent   int      `toml:"max_concurrent"`
 	TurnTimeout     Duration `toml:"turn_timeout"`
@@ -118,6 +119,15 @@ func Load(path string) (*Config, error) {
 	return cfg, cfg.validate()
 }
 
+// ClaudeEnv is the environment that a claude process needs in addition to
+// the environment of the daemon.
+func (c *Config) ClaudeEnv() []string {
+	if c.ClaudeConfigDir == "" {
+		return nil
+	}
+	return []string{"CLAUDE_CONFIG_DIR=" + c.ClaudeConfigDir}
+}
+
 func (c *Config) validate() error {
 	switch {
 	case c.BaseURL == "":
@@ -128,6 +138,8 @@ func (c *Config) validate() error {
 		return errors.New("config: token is empty")
 	case c.BotUserID == "":
 		return errors.New("config: bot_user_id is empty")
+	case c.ClaudeConfigDir != "" && !filepath.IsAbs(c.ClaudeConfigDir):
+		return errors.New("config: claude_config_dir must be an absolute path")
 	case c.Repo == "":
 		return errors.New("config: repo is empty")
 	case c.IsTrusted(c.BotUserID):
@@ -338,6 +350,12 @@ trusted_user_ids = {{list .TrustedUserIDs}}
 repo = {{printf "%q" .Repo}}
 claude_path = {{printf "%q" .ClaudePath}}
 model = {{printf "%q" .Model}}
+
+# The Claude Code config directory of the sessions: the login, the settings
+# and the transcripts. Empty means the default (~/.claude). Set a different
+# directory for each connector when one machine runs connectors for several
+# Claude accounts.
+claude_config_dir = {{printf "%q" .ClaudeConfigDir}}
 
 # Permission mode of the Claude sessions:
 #   "auto"              a classifier permits usual work and blocks risky actions

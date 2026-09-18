@@ -36,6 +36,9 @@ type Turn struct {
 	ToolTimeout    time.Duration
 	Model          string
 	Log            io.Writer
+	// Env has variables for the claude process, in addition to the
+	// environment of the daemon.
+	Env []string
 
 	// HookCommand runs the hook of the turn after each tool call. It is
 	// empty when the turn has no hook. Deadline is when the turn is stopped,
@@ -119,7 +122,7 @@ func (t Turn) Attach(claudePath, dir string) error {
 	if err := os.Chdir(dir); err != nil {
 		return err
 	}
-	return syscall.Exec(path, []string{path, "--resume", t.SessionID, "--mcp-config", t.mcpConfig()}, os.Environ())
+	return syscall.Exec(path, []string{path, "--resume", t.SessionID, "--mcp-config", t.mcpConfig()}, append(os.Environ(), t.Env...))
 }
 
 func (t Turn) Args() []string {
@@ -177,6 +180,7 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	cmd.Stdout = outputWriter
 	cmd.Stderr = t.Log
 	cmd.Env = append(os.Environ(), fmt.Sprintf("MCP_TOOL_TIMEOUT=%d", t.ToolTimeout.Milliseconds()))
+	cmd.Env = append(cmd.Env, t.Env...)
 	if !t.Deadline.IsZero() {
 		cmd.Env = append(cmd.Env,
 			DeadlineVar+"="+t.Deadline.Format(time.RFC3339),

@@ -69,3 +69,15 @@ func TestValidation(t *testing.T) {
 		assert.Error(t, cfg.validate(), name)
 	}
 }
+
+func TestTheClaudeConfigDirMustBeAbsolute(t *testing.T) {
+	cfg := testConfig(t)
+	assert.Empty(t, cfg.ClaudeEnv())
+
+	cfg.ClaudeConfigDir = "claude-work"
+	assert.Error(t, cfg.validate())
+
+	cfg.ClaudeConfigDir = "/home/kevin/.claude-work"
+	require.NoError(t, cfg.validate())
+	assert.Equal(t, []string{"CLAUDE_CONFIG_DIR=/home/kevin/.claude-work"}, cfg.ClaudeEnv())
+}

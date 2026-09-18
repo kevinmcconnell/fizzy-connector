@@ -509,8 +509,14 @@ func Doctor(ctx context.Context, cfg *config.Config) error {
 		return detail, nil
 	})
 	check("Claude Code", func() (string, error) {
-		out, err := exec.CommandContext(ctx, cfg.ClaudePath, "--version").Output()
-		return strings.TrimSpace(string(out)), err
+		version := exec.CommandContext(ctx, cfg.ClaudePath, "--version")
+		version.Env = append(os.Environ(), cfg.ClaudeEnv()...)
+		out, err := version.Output()
+		detail := strings.TrimSpace(string(out))
+		if cfg.ClaudeConfigDir != "" {
+			detail += ", config in " + cfg.ClaudeConfigDir
+		}
+		return detail, err
 	})
 	check("Websocket login", func() (string, error) {
 		token := cfg.SessionToken()
