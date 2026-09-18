@@ -474,3 +474,31 @@ func TestRealClaude(t *testing.T) {
 	assert.Contains(t, string(log), "mcp__fizzy__reply", "the answer did not come from the reply tool")
 	t.Logf("answer: %s", fake.botComments(7)[0])
 }
+
+// The slow fake claude takes a second, so that a stop can arrive during a turn.
+const slowFakeClaude = `#!/bin/sh
+echo "$@" >> "$FAKE_CLAUDE_LOG"
+cat > /dev/null
+echo '{"type":"system","subtype":"init"}'
+sleep 1
+echo '{"type":"result","is_error":false,"result":"slow answer"}'
+`
+
+func TestADrainLetsTheRunningTurnFinish(t *testing.T) {
+	fake, server := newTestServer(t)
+	script := filepath.Join(t.TempDir(), "claude")
+	require.NoError(t, os.WriteFile(script, []byte(slowFakeClaude), 0o755))
+	d, claudeLog := startDaemonWith(t, server, script, "")
+
+	fake.mention(7, trustedID)
+	waitFor(t, "the turn to start", func() bool {
+		log, _ := os.ReadFile(claudeLog)
+		return len(log) > 0
+	})
+	d.Drain()
+	fake.mention(8, trustedID)
+
+	require.Eventually(t, func() bool { return len(fake.botComments(7)) == 1 }, 5*time.Second, 50*time.Millisecond)
+	assert.Contains(t, fake.botComments(7)[0], "slow answer")
+	assert.Empty(t, fake.botComments(8), "a mention after the drain started a turn")
+}

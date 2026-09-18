@@ -62,22 +62,31 @@ together into the next turn, and get one answer.
 A `claude` process runs only for one turn. `max_concurrent` limits the processes, not the sessions:
 with a limit of 4 and mentions on 10 cards, 4 turns run and 6 cards wait in a
 queue. Each mention gets a 👀 reaction immediately. `turn_timeout` stops a turn
-that runs too long.
+that runs too long. Shortly before that, a tenth of the timeout and between
+two and ten minutes, Claude hears after each tool call when the turn ends, so
+that it commits the finished work and replies. When the stop comes anyway, the
+reply on the card says so, and a later mention continues the session.
 
 ```sh
-fizzy-connector sessions      # the card sessions, with turn counts and cost
+fizzy-connector sessions      # the card sessions, with context size and cost
 fizzy-connector sessions 42   # the turns of card 42, with token counts
 fizzy-connector attach 42     # open the session of card 42 interactively
+fizzy-connector reset 42      # start a new session for card 42 at its next turn
 ```
 
 An attached session has the Fizzy tools, but not `message_card_agent` and not
 the permission questions in Fizzy: you are at the terminal to answer them.
 
-The connector records the usage that Claude Code reports for each turn. The
-cost is an estimate at API prices. With a subscription you do not pay it, but
-the token counts show what uses your limits. A high "cache write" value on a
-resumed turn means that the prompt cache was cold, and the full history of
-the card was sent as new input.
+The connector records the usage of each turn from the transcript of the
+session, subagents included, so a turn that was stopped has its usage too.
+The cost is an estimate at API prices. With a subscription you do not pay it,
+but the token counts show what uses your limits. The context is the size of
+the last API call: the history that every call of the next turn sends again.
+Cache reads are cheap, but a session with a context of 300K tokens makes a
+short question cost as much as some minutes of work on a small session. Use
+`reset` when a card has a large context and the history is no longer needed:
+the next turn starts from the card content, and the old transcript stays on
+disk for `attach`.
 
 Logs of each turn are in `~/.local/state/fizzy-connector/<account>/logs/card-N.log`.
 
@@ -126,8 +135,9 @@ real boundary, run the connector as a separate OS user or in a container.
 This is one more reason not to use `bypassPermissions` on your main machine.
 
 **After a crash.** The connector records a turn as done after it ends. If
-the daemon or the machine stops during a turn, the turn runs again after the
-restart. A reply can then appear two times, and a command can run two times.
+the machine stops during a turn, or the daemon is stopped a second time, the
+turn runs again after the restart. A reply can then appear two times, and a
+command can run two times.
 
 ## Permissions
 
@@ -195,19 +205,21 @@ chain of agent messages stops after 3 hops.
 
 Run `fizzy-connector run` in a terminal or in a `tmux` session. The sessions
 then have your shell environment: your `PATH`, your SSH agent and your other
-variables. When the daemon is stopped, mentions stay as unread notifications
-in Fizzy, and the daemon handles them at the next start.
+variables. Stop the daemon with Ctrl-C: it starts no more turns, and the
+turns that run finish first. A second Ctrl-C stops them now. Mentions that
+the daemon did not handle stay as unread notifications in Fizzy, and the
+daemon handles them at the next start.
 
 ## Pending work
 
-- **A policy for old sessions.** Each turn resumes the session of its card,
-  and so sends the full history of the card again. This is cheap while the
-  prompt cache is warm, and expensive when it is cold. For an old card with a
-  long history, a new session that starts from the card content can be the
-  better choice, at the cost of some continuity. The policy is not defined
-  yet. The plan is to define it from the data that `fizzy-connector sessions`
-  records, for example: start a new session when the last turn is older than
-  some hours and the session is larger than some number of tokens.
+- **An automatic policy for old sessions.** Each turn resumes the session of
+  its card, and so sends the full history of the card again. `reset` is the
+  manual choice. An automatic rule is not defined yet, because the connector
+  cannot tell from a mention whether it needs the history. Data from
+  September 2026: the context grew to 250K tokens in one implementation turn
+  of 30 minutes, and each short follow-up turn on that session then cost
+  about $0.50 at API prices. A rule could use the context size and the age
+  of the last turn that `fizzy-connector sessions` records.
 - **A systemd user unit** (`fizzy-connector service install`). The open point
   is the environment of the sessions: `PATH`, SSH agent and similar values.
 

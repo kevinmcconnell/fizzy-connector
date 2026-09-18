@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -102,6 +103,26 @@ func newRootCommand() *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:   "reset <card>",
+		Short: "Start a new session for a card at its next turn, with the card content and without the old history",
+		Args:  cobra.ExactArgs(1),
+		RunE: withConfig(func(_ *cobra.Command, cfg *config.Config, args []string) error {
+			return resetSession(cfg, args[0])
+		}),
+	})
+
+	// The daemon sets this command as the PostToolUse hook of each turn. It
+	// is not for direct use.
+	root.AddCommand(&cobra.Command{
+		Use:    "turn-hook",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return claude.TurnHook(time.Now(), os.Getenv, os.Stdin, os.Stdout)
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "attach <card>",
 		Short: "Open the session of a card in interactive Claude Code",
 		Args:  cobra.ExactArgs(1),
@@ -132,7 +153,20 @@ func newRunCommand(withConfig configCommand) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return d.Run(cmd.Context())
+			// The first signal lets the turns that run finish. The second
+			// stops them.
+			ctx, stop := context.WithCancel(context.Background())
+			defer stop()
+			signals := make(chan os.Signal, 2)
+			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(signals)
+			go func() {
+				<-signals
+				d.Drain()
+				<-signals
+				stop()
+			}()
+			return d.Run(ctx)
 		}),
 	}
 	command.Flags().StringVar(&permissionMode, "permission-mode", "", "override permission_mode of the config: auto, acceptEdits or bypassPermissions")
@@ -187,19 +221,21 @@ func listSessions(cfg *config.Config) error {
 
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	total := 0.0
-	fmt.Fprintln(table, "CARD\tSESSION\tQUEUED\tTURNS\tLAST COST\tTOTAL COST (EST.)\tLAST TURN")
+	fmt.Fprintln(table, "CARD\tSESSION\tQUEUED\tTURNS\tCONTEXT\tLAST COST\tTOTAL COST (EST.)\tLAST TURN")
 	for _, state := range states {
-		lastTurn, lastCost := "-", "-"
+		lastTurn, lastCost, context := "-", "-", "-"
 		if !state.LastTurnAt.IsZero() {
 			lastTurn = state.LastTurnAt.Local().Format("2006-01-02 15:04")
 		}
 		if len(state.Turns) > 0 {
-			lastCost = fmt.Sprintf("$%.3f", state.Turns[len(state.Turns)-1].CostUSD)
+			last := state.Turns[len(state.Turns)-1]
+			lastCost = fmt.Sprintf("$%.3f", last.CostUSD)
+			context = thousands(last.ContextTokens)
 		}
 		total += state.TotalCostUSD
-		fmt.Fprintf(table, "#%d\t%s\t%d\t%d\t%s\t$%.2f\t%s\n", state.Number, state.SessionID, len(state.Queue), state.TurnCount, lastCost, state.TotalCostUSD, lastTurn)
+		fmt.Fprintf(table, "#%d\t%s\t%d\t%d\t%s\t%s\t$%.2f\t%s\n", state.Number, state.SessionID, len(state.Queue), state.TurnCount, context, lastCost, state.TotalCostUSD, lastTurn)
 	}
-	fmt.Fprintf(table, "\t\t\t\t\t$%.2f\t\n", total)
+	fmt.Fprintf(table, "\t\t\t\t\t\t$%.2f\t\n", total)
 	return table.Flush()
 }
 
@@ -218,16 +254,42 @@ func showTurns(cfg *config.Config, cardArg string) error {
 	}
 
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(table, "TURN AT\tSECONDS\tSESSION\tAPI CALLS\tINPUT\tCACHE WRITE\tCACHE READ\tOUTPUT\tCOST (EST.)")
+	fmt.Fprintln(table, "TURN AT\tSECONDS\tSESSION\tAPI CALLS\tINPUT\tCACHE WRITE\tCACHE READ\tOUTPUT\tCONTEXT\tCOST (EST.)")
 	for _, turn := range state.Turns {
 		session := "new"
 		if turn.Resumed {
 			session = "resumed"
 		}
-		fmt.Fprintf(table, "%s\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t$%.3f\n", turn.At.Local().Format("2006-01-02 15:04"),
-			turn.Seconds, session, turn.APICalls, turn.InputTokens, turn.CacheWriteTokens, turn.CacheReadTokens, turn.OutputTokens, turn.CostUSD)
+		fmt.Fprintf(table, "%s\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t$%.3f\n", turn.At.Local().Format("2006-01-02 15:04"),
+			turn.Seconds, session, turn.APICalls, turn.InputTokens, turn.CacheWriteTokens, turn.CacheReadTokens, turn.OutputTokens,
+			thousands(turn.ContextTokens), turn.CostUSD)
 	}
 	return table.Flush()
+}
+
+// thousands shows a token count as "258K".
+func thousands(count int) string {
+	if count == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%dK", (count+500)/1000)
+}
+
+func resetSession(cfg *config.Config, cardArg string) error {
+	number, err := parseCardNumber(cardArg)
+	if err != nil {
+		return err
+	}
+	cards, err := store.Open(cfg.DataDir())
+	if err != nil {
+		return err
+	}
+	state, err := cards.Update(number, func(state *store.CardState) { state.ResetSession() })
+	if err != nil {
+		return err
+	}
+	fmt.Printf("card #%d starts a new session %s at its next turn\n", number, state.SessionID)
+	return nil
 }
 
 func attach(cfg *config.Config, cardArg string) error {
