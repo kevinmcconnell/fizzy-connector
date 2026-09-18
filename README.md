@@ -41,6 +41,12 @@ use. Claude can read and change only those boards.
 logs) is in `~/.local/state/fizzy-connector`, in one directory for each Fizzy
 account and Claude user.
 
+The sessions use the Claude Code login of the user that runs the daemon. To
+run connectors for several Claude accounts on one machine, give each one its
+own config file (`--config`) and its own `claude_config_dir`: the directory
+where Claude Code keeps its login, settings and transcripts. Log in there
+once with `CLAUDE_CONFIG_DIR=<dir> claude`.
+
 ## How it gets mentions
 
 The daemon reads the notifications of the Claude user from the Fizzy API. This

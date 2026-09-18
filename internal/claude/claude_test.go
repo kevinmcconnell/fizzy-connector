@@ -216,3 +216,19 @@ func TestTheHookIsInTheSettingsOfTheTurn(t *testing.T) {
 	assert.Contains(t, args[i+1], `"command":"/bin/fc"`)
 	assert.NotContains(t, Turn{}.Args(), "--settings")
 }
+
+const envFakeClaude = `#!/bin/sh
+cat > /dev/null
+echo "{\"type\":\"result\",\"result\":\"$CLAUDE_CONFIG_DIR\"}"
+`
+
+func TestTheTurnGivesItsEnvironmentToClaude(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	require.NoError(t, os.WriteFile(script, []byte(envFakeClaude), 0o755))
+
+	result, err := Turn{ClaudePath: script, Dir: dir, Log: io.Discard, Env: []string{"CLAUDE_CONFIG_DIR=/tmp/claude-work"}}.Run(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/claude-work", result.Text)
+}

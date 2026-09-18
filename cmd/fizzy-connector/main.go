@@ -317,6 +317,7 @@ func attach(cfg *config.Config, cardArg string) error {
 		SessionID:  state.SessionID,
 		MCPCommand: executable,
 		MCPArgs:    daemon.MCPArgs(cfg.Path, number, "", ""),
+		Env:        cfg.ClaudeEnv(),
 	}
 	return turn.Attach(cfg.ClaudePath, cfg.Repo)
 }
