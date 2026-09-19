@@ -35,6 +35,7 @@ type Turn struct {
 	Approvals      bool
 	ToolTimeout    time.Duration
 	Model          string
+	Effort         string
 	Log            io.Writer
 	// Env has variables for the claude process, in addition to the
 	// environment of the daemon.
@@ -155,6 +156,9 @@ func (t Turn) Args() []string {
 	}
 	if t.Model != "" {
 		args = append(args, "--model", t.Model)
+	}
+	if t.Effort != "" {
+		args = append(args, "--effort", t.Effort)
 	}
 	if t.HookCommand != "" {
 		args = append(args, "--settings", t.hookSettings())

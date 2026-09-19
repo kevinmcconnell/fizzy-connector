@@ -207,6 +207,15 @@ func TestTheTranscriptGivesTheCallsOfTheTurnAndItsSubagents(t *testing.T) {
 	assert.Nil(t, Turn{TranscriptFile: file}.transcriptCalls(started), "a turn that ran no tool has no record")
 }
 
+func TestTheModelAndTheEffortAreFlagsOnlyWhenSet(t *testing.T) {
+	args := Turn{Model: "fable", Effort: "xhigh"}.Args()
+	assert.Contains(t, strings.Join(args, " "), "--model fable --effort xhigh")
+
+	plain := strings.Join(Turn{}.Args(), " ")
+	assert.NotContains(t, plain, "--model")
+	assert.NotContains(t, plain, "--effort")
+}
+
 func TestTheHookIsInTheSettingsOfTheTurn(t *testing.T) {
 	args := Turn{HookCommand: "/bin/fc", HookArgs: []string{"turn-deadline"}}.Args()
 

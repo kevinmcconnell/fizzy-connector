@@ -59,10 +59,14 @@ func TestValidation(t *testing.T) {
 		"turn timeout of zero":   func(c *Config) { c.TurnTimeout.Duration = 0 },
 		"approval timeout large": func(c *Config) { c.ApprovalTimeout.Duration = 2 * c.TurnTimeout.Duration },
 		"permission mode":        func(c *Config) { c.PermissionMode = "everything" },
+		"effort level":           func(c *Config) { c.Effort = "extreme" },
 		"base URL":               func(c *Config) { c.BaseURL = "fizzy.example" },
 		"relative repo":          func(c *Config) { c.Repo = "work" },
 	}
 	require.NoError(t, testConfig(t).validate())
+	withEffort := testConfig(t)
+	withEffort.Effort = "xhigh"
+	require.NoError(t, withEffort.validate())
 	for name, change := range invalid {
 		cfg := testConfig(t)
 		change(cfg)

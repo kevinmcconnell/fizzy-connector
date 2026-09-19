@@ -122,7 +122,9 @@ func (s *Server) progress(ctx context.Context, _ *mcp.CallToolRequest, in progre
 		return nil, nil, err
 	}
 	if s.token != "" {
-		ipc.Send(s.socket, ipc.Request{Op: ipc.OpProgress, Token: s.token})
+		if err := ipc.Send(s.socket, ipc.Request{Op: ipc.OpProgress, Token: s.token}); err != nil {
+			return text("Note posted on card #%d. The connector did not confirm it (%v), so it can ask for a note again.", s.card, err), nil, nil
+		}
 	}
 	return text("Note posted on card #%d. Go on with the work, and call reply at the end.", s.card), nil, nil
 }
