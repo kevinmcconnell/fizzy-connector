@@ -30,6 +30,7 @@ type Config struct {
 	ClaudePath      string   `toml:"claude_path"`
 	ClaudeConfigDir string   `toml:"claude_config_dir"`
 	Model           string   `toml:"model"`
+	Effort          string   `toml:"effort"`
 	PermissionMode  string   `toml:"permission_mode"`
 	AllowedTools    []string `toml:"allowed_tools"`
 	AddDirs         []string `toml:"add_dirs"`
@@ -44,6 +45,8 @@ type Config struct {
 
 	Path string `toml:"-"`
 }
+
+var validEffortLevels = map[string]bool{"": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
 
 var validPermissionModes = map[string]bool{
 	"auto": true, "acceptEdits": true, "bypassPermissions": true, "dontAsk": true, "plan": true, "manual": true,
@@ -148,6 +151,8 @@ func (c *Config) validate() error {
 		return errors.New("config: trusted_user_ids must not contain bot_user_id")
 	case !validPermissionModes[c.PermissionMode]:
 		return fmt.Errorf("config: permission_mode %q is not valid", c.PermissionMode)
+	case !validEffortLevels[c.Effort]:
+		return fmt.Errorf("config: effort %q is not valid: use low, medium, high, xhigh or max", c.Effort)
 	case c.MaxConcurrent < 1:
 		return errors.New("config: max_concurrent must be 1 or more")
 	case c.PollInterval.Duration < 100*time.Millisecond:
@@ -354,6 +359,10 @@ trusted_user_ids = {{list .TrustedUserIDs}}
 repo = {{printf "%q" .Repo}}
 claude_path = {{printf "%q" .ClaudePath}}
 model = {{printf "%q" .Model}}
+
+# Effort level of the sessions: low, medium, high, xhigh or max. Empty means
+# the Claude Code setting.
+effort = {{printf "%q" .Effort}}
 
 # The Claude Code config directory of the sessions: the login, the settings
 # and the transcripts. Empty means the default (~/.claude). Set a different
