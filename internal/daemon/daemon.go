@@ -73,15 +73,24 @@ type turn struct {
 	// consumed counts the items of the queue that this turn has: the items
 	// it started with, and the items that it got after a tool call.
 	// presentedUpTo is the time of the newest comment that it has seen, and
-	// humanRequest reports an item from a person among them.
+	// humanRequest reports an item from a person among them. requestedAt is
+	// when the last item from a person arrived during the turn, and
+	// lastCommentAt is when Claude last posted on the card.
 	consumed      int
 	presentedUpTo time.Time
 	humanRequest  bool
+	requestedAt   time.Time
 	lastCommentAt time.Time
 	noteAskedAt   time.Time
 	// checkMu serializes the checks of a turn: tool calls of subagents can
 	// run at the same time.
 	checkMu sync.Mutex
+}
+
+// answered reports that Claude replied, and that it posted again after the
+// last request that arrived during the turn.
+func (t *turn) answered() bool {
+	return t.replied && !t.lastCommentAt.Before(t.requestedAt)
 }
 
 func New(cfg *config.Config, logger *slog.Logger) (*Daemon, error) {
@@ -215,7 +224,7 @@ func (d *Daemon) beginTurn(ctx context.Context, card, hops int) (string, *turn, 
 	}
 
 	turnCtx, cancel := context.WithCancel(ctx)
-	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile, lastCommentAt: time.Now()}
+	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile, lastCommentAt: time.Now(), requestedAt: time.Now()}
 	d.mu.Lock()
 	d.turns[token] = t
 	d.mu.Unlock()

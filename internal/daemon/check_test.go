@@ -96,6 +96,21 @@ func TestAMentionDuringATurnOfAnAgentMessageGetsTheFallbackReply(t *testing.T) {
 	assert.Contains(t, fake.botComments(7)[0], "long answer")
 }
 
+func TestARequestDuringTheTurnNeedsACommentAfterIt(t *testing.T) {
+	start := time.Now()
+	t1 := &turn{replied: true, lastCommentAt: start.Add(time.Minute), requestedAt: start}
+	assert.True(t, t1.answered())
+
+	t1.requestedAt = start.Add(2 * time.Minute)
+	assert.False(t, t1.answered(), "a reply before the request answered it")
+
+	t1.lastCommentAt = start.Add(3 * time.Minute)
+	assert.True(t, t1.answered(), "a note after the request is an answer")
+
+	t1.replied = false
+	assert.False(t, t1.answered(), "a turn without a reply is answered")
+}
+
 func TestAProgressNoteIsAskedForOnceForEachQuietInterval(t *testing.T) {
 	_, server := newTestServer(t)
 	d, _ := startDaemon(t, server)

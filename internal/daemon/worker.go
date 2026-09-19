@@ -137,7 +137,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 		"cache_write", result.Usage.CacheWriteTokens, "output", result.Usage.OutputTokens, "error", runErr)
 
 	pendingReply := ""
-	if !ended.replied && ended.humanRequest {
+	if ended.humanRequest && !ended.answered() {
 		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
 	}
 
@@ -210,7 +210,7 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		Dir:            d.cfg.Repo,
 		SessionID:      state.SessionID,
 		Resume:         state.SessionStarted,
-		SystemPrompt:   systemPrompt(card.Number),
+		SystemPrompt:   systemPrompt(card.Number, d.cfg.ProgressInterval.Duration > 0),
 		Prompt:         prompt,
 		MCPCommand:     d.mcpCommand,
 		MCPArgs:        MCPArgs(d.cfg.Path, card.Number, d.cfg.SocketPath(), t.tokenFile),

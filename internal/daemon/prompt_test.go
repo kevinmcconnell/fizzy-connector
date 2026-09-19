@@ -58,7 +58,7 @@ func TestPromptIsADocumentThatContentCannotChange(t *testing.T) {
 }
 
 func TestSystemPromptHasNoFizzyText(t *testing.T) {
-	prompt := systemPrompt(9)
+	prompt := systemPrompt(9, true)
 	assert.Contains(t, prompt, "card #9")
 	assert.NotContains(t, prompt, "Card\n")
 }
@@ -75,6 +75,12 @@ func TestLaterTurnShowsOnlyNewComments(t *testing.T) {
 	assert.Empty(t, document.HiddenAuthors)
 	require.Len(t, document.Comments, 1)
 	assert.Equal(t, "c2", document.Comments[0].ID)
+}
+
+func TestTheNotesRuleFollowsTheConfig(t *testing.T) {
+	assert.Contains(t, systemPrompt(9, true), "post a first note early")
+	assert.NotContains(t, systemPrompt(9, false), "post a first note early")
+	assert.Contains(t, systemPrompt(9, false), "New comments can arrive")
 }
 
 func TestADocumentDuringTheTurnSaysSo(t *testing.T) {
