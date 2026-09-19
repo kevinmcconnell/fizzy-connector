@@ -96,6 +96,23 @@ func TestAMentionDuringATurnOfAnAgentMessageGetsTheFallbackReply(t *testing.T) {
 	assert.Contains(t, fake.botComments(7)[0], "long answer")
 }
 
+func TestAnAgentMessageDuringATurnCountsItsHops(t *testing.T) {
+	_, server := newTestServer(t)
+	d, _ := startDaemon(t, server)
+	token, turn, err := d.beginTurn(t.Context(), 1, 0)
+	require.NoError(t, err)
+	defer d.endTurn(token)
+	_, err = d.store.Update(1, func(state *store.CardState) {
+		state.Queue = []store.Item{{Kind: store.KindAgentMessage, FromCard: 2, Text: "hello", Hops: maxAgentHops}}
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, d.handleIPC(ipc.Request{Op: ipc.OpCheck, Token: token}).Message, "agent_messages")
+	assert.Equal(t, maxAgentHops, turn.hops)
+	refusal := d.handleIPC(ipc.Request{Op: ipc.OpMessage, Token: token, ToCard: 2, Text: "and on"}).Error
+	assert.Contains(t, refusal, "limit")
+}
+
 func TestARequestDuringTheTurnNeedsACommentAfterIt(t *testing.T) {
 	start := time.Now()
 	t1 := &turn{replied: true, lastCommentAt: start.Add(time.Minute), requestedAt: start}

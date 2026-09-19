@@ -492,15 +492,10 @@ func (d *Daemon) handleIPC(request ipc.Request) ipc.Response {
 
 	switch request.Op {
 	case ipc.OpReplied:
-		d.mu.Lock()
-		t.replied = true
-		t.lastCommentAt = time.Now()
-		d.mu.Unlock()
+		d.noteComment(t, true)
 		return ipc.Response{}
 	case ipc.OpProgress:
-		d.mu.Lock()
-		t.lastCommentAt = time.Now()
-		d.mu.Unlock()
+		d.noteComment(t, false)
 		return ipc.Response{}
 	case ipc.OpCheck:
 		return d.check(t)
@@ -515,6 +510,18 @@ func (d *Daemon) handleIPC(request ipc.Request) ipc.Response {
 	return ipc.Response{Error: fmt.Sprintf("unknown operation %q", request.Op)}
 }
 
+// noteComment records a comment of Claude on the card. A turn that ended
+// does not change: the worker reads the turn after endTurn.
+func (d *Daemon) noteComment(t *turn, isReply bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t.ctx.Err() != nil {
+		return
+	}
+	t.replied = t.replied || isReply
+	t.lastCommentAt = time.Now()
+}
+
 func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 	if request.ToCard == t.card {
 		return errors.New("you cannot send a message to your own card")
@@ -522,7 +529,10 @@ func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 	if t.ctx.Err() != nil {
 		return errors.New("the turn ended")
 	}
-	if t.hops >= maxAgentHops {
+	d.mu.Lock()
+	hops := t.hops
+	d.mu.Unlock()
+	if hops >= maxAgentHops {
 		return fmt.Errorf("message refused: this chain of agent messages reached the limit of %d; reply on your card instead", maxAgentHops)
 	}
 	if len(request.Text) > maxAgentMessageSize {
@@ -544,7 +554,7 @@ func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 			Kind:     store.KindAgentMessage,
 			FromCard: t.card,
 			Text:     request.Text,
-			Hops:     t.hops + 1,
+			Hops:     hops + 1,
 		})
 	})
 	if err != nil {
