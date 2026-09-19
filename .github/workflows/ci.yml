@@ -122,7 +122,7 @@ jobs:
       if: github.ref_type == 'branch'
       run: |
         gh release delete latest --cleanup-tag --yes || true
-        printf 'Automated build of `main` at %s.\n\n' "$GITHUB_SHA" > latest-notes.md
+        printf 'Automated build of the main branch at %s.\n\n' "$GITHUB_SHA" > latest-notes.md
         cat notes.md >> latest-notes.md
         gh release create latest \
           --target "$GITHUB_SHA" \
