@@ -43,12 +43,16 @@ type Turn struct {
 	// HookCommand runs the hook of the turn after each tool call. It is
 	// empty when the turn has no hook. Deadline is when the turn is stopped,
 	// and from WarnAt on the hook tells Claude how much time is left.
-	// TranscriptFile is where the hook records the transcript path.
+	// TranscriptFile is where the hook records the transcript path. With
+	// SocketPath and TokenFile, the hook asks the daemon what happened on
+	// the card since the turn started.
 	HookCommand    string
 	HookArgs       []string
 	Deadline       time.Time
 	WarnAt         time.Time
 	TranscriptFile string
+	SocketPath     string
+	TokenFile      string
 }
 
 type Result struct {
@@ -188,6 +192,9 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	}
 	if t.TranscriptFile != "" {
 		cmd.Env = append(cmd.Env, TranscriptFileVar+"="+t.TranscriptFile)
+	}
+	if t.SocketPath != "" && t.TokenFile != "" {
+		cmd.Env = append(cmd.Env, SocketVar+"="+t.SocketPath, TokenFileVar+"="+t.TokenFile)
 	}
 
 	// The turn gets its own process group, so that a stop also ends the

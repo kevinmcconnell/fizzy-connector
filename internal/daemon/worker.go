@@ -119,13 +119,13 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 	d.logger.Info("turn started", "card", number, "session", state.SessionID, "resume", state.SessionStarted)
 
 	renewed := false
-	result, presentedUpTo, runErr := d.runClaude(turnCtx, t, state, card, comments, items, deadline)
+	result, runErr := d.runClaude(turnCtx, t, state, card, comments, items, deadline)
 	if runErr != nil && state.SessionStarted && !result.SessionStarted && ctx.Err() == nil && !errors.Is(runErr, claude.ErrNotStarted) {
 		d.logger.Warn("session not found: starting a new session with the full card", "card", number)
 		state.SessionID, state.SessionStarted, renewed = uuid.NewString(), false, true
-		result, presentedUpTo, runErr = d.runClaude(turnCtx, t, state, card, comments, items, deadline)
+		result, runErr = d.runClaude(turnCtx, t, state, card, comments, items, deadline)
 	}
-	replied := d.endTurn(token)
+	ended := d.endTurn(token)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -137,13 +137,13 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 		"cache_write", result.Usage.CacheWriteTokens, "output", result.Usage.OutputTokens, "error", runErr)
 
 	pendingReply := ""
-	if !replied && hasHumanTrigger(items) {
+	if ended.humanRequest && !ended.answered() {
 		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
 	}
 
 	saved, err := d.store.Update(number, func(saved *store.CardState) {
 		saved.PendingReply = pendingReply
-		saved.Queue = saved.Queue[len(items):]
+		saved.Queue = saved.Queue[ended.consumed:]
 		// A reset during the turn keeps its new session.
 		if renewed || saved.SessionID == state.SessionID {
 			saved.SessionID = state.SessionID
@@ -162,7 +162,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 			OutputTokens:     result.Usage.OutputTokens,
 			ContextTokens:    result.Usage.ContextTokens,
 		})
-		saved.PromptedUntil = presentedUpTo
+		saved.PromptedUntil = ended.presentedUpTo
 	})
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func (d *Daemon) deliverPendingReply(ctx context.Context, state *store.CardState
 	return err
 }
 
-func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, items []store.Item, deadline time.Time) (claude.Result, time.Time, error) {
+func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState, card *fizzy.Card, comments []fizzy.Comment, items []store.Item, deadline time.Time) (claude.Result, error) {
 	prompt, presentedUpTo := buildPrompt(promptInput{
 		card:         card,
 		comments:     comments,
@@ -195,10 +195,13 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		firstTurn:    !state.SessionStarted,
 		promptedUpTo: state.PromptedUntil,
 	})
+	d.mu.Lock()
+	t.consumed, t.presentedUpTo, t.humanRequest = len(items), presentedUpTo, hasHumanTrigger(items)
+	d.mu.Unlock()
 
 	logFile, err := d.openLog(card.Number)
 	if err != nil {
-		return claude.Result{}, presentedUpTo, fmt.Errorf("%w: %w", claude.ErrNotStarted, err)
+		return claude.Result{}, fmt.Errorf("%w: %w", claude.ErrNotStarted, err)
 	}
 	defer logFile.Close()
 
@@ -207,7 +210,7 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		Dir:            d.cfg.Repo,
 		SessionID:      state.SessionID,
 		Resume:         state.SessionStarted,
-		SystemPrompt:   systemPrompt(card.Number),
+		SystemPrompt:   systemPrompt(card.Number, d.cfg.ProgressInterval.Duration > 0),
 		Prompt:         prompt,
 		MCPCommand:     d.mcpCommand,
 		MCPArgs:        MCPArgs(d.cfg.Path, card.Number, d.cfg.SocketPath(), t.tokenFile),
@@ -224,9 +227,10 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		HookCommand:    d.mcpCommand,
 		HookArgs:       []string{"turn-hook"},
 		TranscriptFile: t.tokenFile + ".transcript",
+		SocketPath:     d.cfg.SocketPath(),
+		TokenFile:      t.tokenFile,
 	}
-	result, err := turn.Run(ctx)
-	return result, presentedUpTo, err
+	return turn.Run(ctx)
 }
 
 // MCPArgs has no socket and no token file for a session that a person

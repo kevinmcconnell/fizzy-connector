@@ -69,6 +69,28 @@ type turn struct {
 	cancel    context.CancelFunc
 	tokenFile string
 	replied   bool
+
+	// consumed counts the items of the queue that this turn has: the items
+	// it started with, and the items that it got after a tool call.
+	// presentedUpTo is the time of the newest comment that it has seen, and
+	// humanRequest reports an item from a person among them. requestedAt is
+	// when the last item from a person arrived during the turn, and
+	// lastCommentAt is when Claude last posted on the card.
+	consumed      int
+	presentedUpTo time.Time
+	humanRequest  bool
+	requestedAt   time.Time
+	lastCommentAt time.Time
+	noteAskedAt   time.Time
+	// checkMu serializes the checks of a turn: tool calls of subagents can
+	// run at the same time.
+	checkMu sync.Mutex
+}
+
+// answered reports that Claude replied, and that it posted again after the
+// last request that arrived during the turn.
+func (t *turn) answered() bool {
+	return t.replied && !t.lastCommentAt.Before(t.requestedAt)
 }
 
 func New(cfg *config.Config, logger *slog.Logger) (*Daemon, error) {
@@ -202,7 +224,7 @@ func (d *Daemon) beginTurn(ctx context.Context, card, hops int) (string, *turn, 
 	}
 
 	turnCtx, cancel := context.WithCancel(ctx)
-	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile}
+	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile, lastCommentAt: time.Now(), requestedAt: time.Now()}
 	d.mu.Lock()
 	d.turns[token] = t
 	d.mu.Unlock()
@@ -210,22 +232,19 @@ func (d *Daemon) beginTurn(ctx context.Context, card, hops int) (string, *turn, 
 }
 
 // endTurn revokes the token and stops the requests of the turn that still
-// wait, for example a permission question.
-func (d *Daemon) endTurn(token string) (replied bool) {
-	d.mu.Lock()
-	t := d.turns[token]
-	delete(d.turns, token)
-	d.mu.Unlock()
-
-	if t == nil {
-		return false
-	}
-	t.cancel()
-	os.Remove(t.tokenFile)
-
+// wait, for example a permission question. It returns the turn as it ended,
+// or nil when the token is not known.
+func (d *Daemon) endTurn(token string) *turn {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return t.replied
+	t := d.turns[token]
+	if t == nil {
+		return nil
+	}
+	delete(d.turns, token)
+	t.cancel()
+	os.Remove(t.tokenFile)
+	return t
 }
 
 func (d *Daemon) turnFor(token string) *turn {
@@ -473,10 +492,13 @@ func (d *Daemon) handleIPC(request ipc.Request) ipc.Response {
 
 	switch request.Op {
 	case ipc.OpReplied:
-		d.mu.Lock()
-		t.replied = true
-		d.mu.Unlock()
+		d.noteComment(t, true)
 		return ipc.Response{}
+	case ipc.OpProgress:
+		d.noteComment(t, false)
+		return ipc.Response{}
+	case ipc.OpCheck:
+		return d.check(t)
 	case ipc.OpMessage:
 		if err := d.deliverAgentMessage(t, request); err != nil {
 			return ipc.Response{Error: err.Error()}
@@ -488,6 +510,18 @@ func (d *Daemon) handleIPC(request ipc.Request) ipc.Response {
 	return ipc.Response{Error: fmt.Sprintf("unknown operation %q", request.Op)}
 }
 
+// noteComment records a comment of Claude on the card. A turn that ended
+// does not change: the worker reads the turn after endTurn.
+func (d *Daemon) noteComment(t *turn, isReply bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t.ctx.Err() != nil {
+		return
+	}
+	t.replied = t.replied || isReply
+	t.lastCommentAt = time.Now()
+}
+
 func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 	if request.ToCard == t.card {
 		return errors.New("you cannot send a message to your own card")
@@ -495,7 +529,10 @@ func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 	if t.ctx.Err() != nil {
 		return errors.New("the turn ended")
 	}
-	if t.hops >= maxAgentHops {
+	d.mu.Lock()
+	hops := t.hops
+	d.mu.Unlock()
+	if hops >= maxAgentHops {
 		return fmt.Errorf("message refused: this chain of agent messages reached the limit of %d; reply on your card instead", maxAgentHops)
 	}
 	if len(request.Text) > maxAgentMessageSize {
@@ -517,7 +554,7 @@ func (d *Daemon) deliverAgentMessage(t *turn, request ipc.Request) error {
 			Kind:     store.KindAgentMessage,
 			FromCard: t.card,
 			Text:     request.Text,
-			Hops:     t.hops + 1,
+			Hops:     hops + 1,
 		})
 	})
 	if err != nil {
