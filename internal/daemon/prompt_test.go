@@ -76,3 +76,17 @@ func TestLaterTurnShowsOnlyNewComments(t *testing.T) {
 	require.Len(t, document.Comments, 1)
 	assert.Equal(t, "c2", document.Comments[0].ID)
 }
+
+func TestADocumentDuringTheTurnSaysSo(t *testing.T) {
+	in := testPromptInput()
+	in.firstTurn, in.duringTurn = false, true
+	document := parsePrompt(t, buildPromptOnly(in))
+
+	assert.Contains(t, document.Turn, "during your turn")
+	assert.Nil(t, document.Card)
+}
+
+func buildPromptOnly(in promptInput) string {
+	prompt, _ := buildPrompt(in)
+	return prompt
+}

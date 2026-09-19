@@ -62,8 +62,16 @@ the daemon continues with the timer and logs a warning.
 ## Sessions and limits
 
 A session is a transcript on disk, one for each card. Mentions on one card go
-to its session in sequence. Mentions that arrive while a turn runs go
+to its session in sequence. A mention that arrives while a turn runs goes to
+that turn: after its next tool call, Claude sees the new comment and can
+answer it, or change course. Mentions that arrive when no turn runs go
 together into the next turn, and get one answer.
+
+Claude posts short progress notes on the card during long work: one early,
+with what it starts with, and one at each step. When a turn runs for
+`progress_interval` (default 10 minutes) without a comment from Claude, the
+connector asks for a note. Set `progress_interval = "0"` to turn the notes
+off.
 
 A `claude` process runs only for one turn. `max_concurrent` limits the processes, not the sessions:
 with a limit of 4 and mentions on 10 cards, 4 turns run and 6 cards wait in a
@@ -186,6 +194,7 @@ prompt is refused immediately.
 | Tool | Function |
 |---|---|
 | `reply` | Post the answer on the card of the session |
+| `progress` | Post a short note on the card of the session during the work |
 | `read_card` | Read a different card (by number or URL) and its comments |
 | `search_cards` | Find cards |
 | `message_card_agent` | Send a message to the session of a different card |

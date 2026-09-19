@@ -69,6 +69,17 @@ type turn struct {
 	cancel    context.CancelFunc
 	tokenFile string
 	replied   bool
+
+	// consumed counts the items of the queue that this turn has: the items
+	// it started with, and the items that it got after a tool call.
+	// presentedUpTo is the time of the newest comment that it has seen.
+	consumed      int
+	presentedUpTo time.Time
+	lastCommentAt time.Time
+	noteAskedAt   time.Time
+	// checkMu serializes the checks of a turn: tool calls of subagents can
+	// run at the same time.
+	checkMu sync.Mutex
 }
 
 func New(cfg *config.Config, logger *slog.Logger) (*Daemon, error) {
@@ -202,7 +213,7 @@ func (d *Daemon) beginTurn(ctx context.Context, card, hops int) (string, *turn, 
 	}
 
 	turnCtx, cancel := context.WithCancel(ctx)
-	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile}
+	t := &turn{card: card, hops: hops, ctx: turnCtx, cancel: cancel, tokenFile: tokenFile, lastCommentAt: time.Now()}
 	d.mu.Lock()
 	d.turns[token] = t
 	d.mu.Unlock()
@@ -210,22 +221,19 @@ func (d *Daemon) beginTurn(ctx context.Context, card, hops int) (string, *turn, 
 }
 
 // endTurn revokes the token and stops the requests of the turn that still
-// wait, for example a permission question.
-func (d *Daemon) endTurn(token string) (replied bool) {
-	d.mu.Lock()
-	t := d.turns[token]
-	delete(d.turns, token)
-	d.mu.Unlock()
-
-	if t == nil {
-		return false
-	}
-	t.cancel()
-	os.Remove(t.tokenFile)
-
+// wait, for example a permission question. It returns the turn as it ended,
+// or nil when the token is not known.
+func (d *Daemon) endTurn(token string) *turn {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return t.replied
+	t := d.turns[token]
+	if t == nil {
+		return nil
+	}
+	delete(d.turns, token)
+	t.cancel()
+	os.Remove(t.tokenFile)
+	return t
 }
 
 func (d *Daemon) turnFor(token string) *turn {
@@ -475,8 +483,16 @@ func (d *Daemon) handleIPC(request ipc.Request) ipc.Response {
 	case ipc.OpReplied:
 		d.mu.Lock()
 		t.replied = true
+		t.lastCommentAt = time.Now()
 		d.mu.Unlock()
 		return ipc.Response{}
+	case ipc.OpProgress:
+		d.mu.Lock()
+		t.lastCommentAt = time.Now()
+		d.mu.Unlock()
+		return ipc.Response{}
+	case ipc.OpCheck:
+		return d.check(t)
 	case ipc.OpMessage:
 		if err := d.deliverAgentMessage(t, request); err != nil {
 			return ipc.Response{Error: err.Error()}

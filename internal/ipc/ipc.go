@@ -11,9 +11,13 @@ import (
 )
 
 const (
-	OpReplied = "replied"
-	OpMessage = "message"
-	OpApprove = "approve"
+	OpReplied  = "replied"
+	OpProgress = "progress"
+	OpMessage  = "message"
+	OpApprove  = "approve"
+	// OpCheck asks, after a tool call, for what happened on the card since
+	// the turn started: new comments, and whether a progress note is due.
+	OpCheck = "check"
 
 	ioTimeout      = 10 * time.Second
 	maxRequestSize = 1 << 20

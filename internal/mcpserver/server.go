@@ -44,6 +44,10 @@ type replyInput struct {
 	Markdown string `json:"markdown" jsonschema:"the complete answer, in Markdown"`
 }
 
+type progressInput struct {
+	Markdown string `json:"markdown" jsonschema:"a short note in Markdown: what is done, and what comes next"`
+}
+
 type readCardInput struct {
 	Card string `json:"card" jsonschema:"a card number (for example 42 or #42) or a Fizzy card URL"`
 }
@@ -64,6 +68,10 @@ func (s *Server) Run(ctx context.Context) error {
 		Name:        "reply",
 		Description: fmt.Sprintf("Post your answer as a comment on card #%d, the card of this conversation.", s.card),
 	}, s.reply)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "progress",
+		Description: fmt.Sprintf("Post a short progress note on card #%d while you work, or answer a question that arrived during the work. It is not your reply: call reply at the end.", s.card),
+	}, s.progress)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_card",
 		Description: "Read a Fizzy card and its comments.",
@@ -104,6 +112,19 @@ func (s *Server) reply(ctx context.Context, _ *mcp.CallToolRequest, in replyInpu
 		}
 	}
 	return text("Comment posted on card #%d.", s.card), nil, nil
+}
+
+func (s *Server) progress(ctx context.Context, _ *mcp.CallToolRequest, in progressInput) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(in.Markdown) == "" {
+		return nil, nil, errors.New("the note is empty")
+	}
+	if _, err := s.client.CreateComment(ctx, s.card, fizzy.MarkdownToHTML(in.Markdown)); err != nil {
+		return nil, nil, err
+	}
+	if s.token != "" {
+		ipc.Send(s.socket, ipc.Request{Op: ipc.OpProgress, Token: s.token})
+	}
+	return text("Note posted on card #%d. Go on with the work, and call reply at the end.", s.card), nil, nil
 }
 
 var (

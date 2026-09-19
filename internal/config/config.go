@@ -35,11 +35,12 @@ type Config struct {
 	AddDirs         []string `toml:"add_dirs"`
 	Approvals       bool     `toml:"approvals"`
 
-	MaxConcurrent   int      `toml:"max_concurrent"`
-	TurnTimeout     Duration `toml:"turn_timeout"`
-	ApprovalTimeout Duration `toml:"approval_timeout"`
-	PollInterval    Duration `toml:"poll_interval"`
-	StateDir        string   `toml:"state_dir"`
+	MaxConcurrent    int      `toml:"max_concurrent"`
+	TurnTimeout      Duration `toml:"turn_timeout"`
+	ApprovalTimeout  Duration `toml:"approval_timeout"`
+	ProgressInterval Duration `toml:"progress_interval"`
+	PollInterval     Duration `toml:"poll_interval"`
+	StateDir         string   `toml:"state_dir"`
 
 	Path string `toml:"-"`
 }
@@ -91,11 +92,12 @@ func Defaults() *Config {
 			"Read", "Glob", "Grep", "Edit", "Write",
 			"Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
 		},
-		MaxConcurrent:   4,
-		TurnTimeout:     Duration{30 * time.Minute},
-		ApprovalTimeout: Duration{10 * time.Minute},
-		PollInterval:    Duration{3 * time.Second},
-		StateDir:        defaultStateDir(),
+		MaxConcurrent:    4,
+		TurnTimeout:      Duration{30 * time.Minute},
+		ApprovalTimeout:  Duration{10 * time.Minute},
+		ProgressInterval: Duration{10 * time.Minute},
+		PollInterval:     Duration{3 * time.Second},
+		StateDir:         defaultStateDir(),
 	}
 }
 
@@ -154,6 +156,8 @@ func (c *Config) validate() error {
 		return errors.New("config: turn_timeout must be 1m or more")
 	case c.ApprovalTimeout.Duration < 10*time.Second || c.ApprovalTimeout.Duration > c.TurnTimeout.Duration:
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")
+	case c.ProgressInterval.Duration < 0:
+		return errors.New("config: progress_interval must be 0 or more")
 	}
 	if parsed, err := url.Parse(c.BaseURL); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("config: base_url %q is not an http or https URL", c.BaseURL)
@@ -378,6 +382,10 @@ approval_timeout = {{printf "%q" .ApprovalTimeout.String}}
 # Maximum number of claude processes that run at the same time.
 max_concurrent = {{.MaxConcurrent}}
 turn_timeout = {{printf "%q" .TurnTimeout.String}}
+
+# When a turn runs this long without a comment on the card, Claude is asked
+# for a short progress note. "0" turns the notes off.
+progress_interval = {{printf "%q" .ProgressInterval.String}}
 
 # Fetch interval when the websocket is not connected.
 poll_interval = {{printf "%q" .PollInterval.String}}
