@@ -137,7 +137,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 		"cache_write", result.Usage.CacheWriteTokens, "output", result.Usage.OutputTokens, "error", runErr)
 
 	pendingReply := ""
-	if !ended.replied && hasHumanTrigger(items) {
+	if !ended.replied && ended.humanRequest {
 		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
 	}
 
@@ -196,7 +196,7 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		promptedUpTo: state.PromptedUntil,
 	})
 	d.mu.Lock()
-	t.consumed, t.presentedUpTo = len(items), presentedUpTo
+	t.consumed, t.presentedUpTo, t.humanRequest = len(items), presentedUpTo, hasHumanTrigger(items)
 	d.mu.Unlock()
 
 	logFile, err := d.openLog(card.Number)

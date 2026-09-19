@@ -72,9 +72,11 @@ type turn struct {
 
 	// consumed counts the items of the queue that this turn has: the items
 	// it started with, and the items that it got after a tool call.
-	// presentedUpTo is the time of the newest comment that it has seen.
+	// presentedUpTo is the time of the newest comment that it has seen, and
+	// humanRequest reports an item from a person among them.
 	consumed      int
 	presentedUpTo time.Time
+	humanRequest  bool
 	lastCommentAt time.Time
 	noteAskedAt   time.Time
 	// checkMu serializes the checks of a turn: tool calls of subagents can

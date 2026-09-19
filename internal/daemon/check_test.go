@@ -11,6 +11,7 @@ import (
 
 	"github.com/kevinmcconnell/fizzy-connector/internal/config"
 	"github.com/kevinmcconnell/fizzy-connector/internal/ipc"
+	"github.com/kevinmcconnell/fizzy-connector/internal/store"
 )
 
 // The turn takes two seconds, so that a mention can arrive while it runs.
@@ -65,6 +66,34 @@ func TestAMentionDuringATurnGoesToThatTurn(t *testing.T) {
 	state, err := d.store.Get(7)
 	require.NoError(t, err)
 	assert.Empty(t, state.Queue)
+}
+
+func TestAMentionDuringATurnOfAnAgentMessageGetsTheFallbackReply(t *testing.T) {
+	fake, server := newTestServer(t)
+	script := filepath.Join(t.TempDir(), "claude")
+	require.NoError(t, os.WriteFile(script, []byte(longFakeClaude), 0o755))
+	d, _ := startDaemonWith(t, server, script, "")
+
+	_, err := d.store.Update(7, func(state *store.CardState) {
+		state.Queue = []store.Item{{Kind: store.KindAgentMessage, FromCard: 2, Text: "hello", Hops: 1}}
+	})
+	require.NoError(t, err)
+	d.kick(7)
+	var token string
+	waitFor(t, "the turn to start", func() bool {
+		token = d.tokenOfTheTurn(7)
+		return token != ""
+	})
+
+	fake.mention(7, trustedID)
+	waitFor(t, "the mention to be queued", func() bool {
+		state, err := d.store.Get(7)
+		return err == nil && len(state.Queue) == 2
+	})
+	assert.Contains(t, d.handleIPC(ipc.Request{Op: ipc.OpCheck, Token: token}).Message, "question 1")
+
+	waitFor(t, "the fallback reply", func() bool { return len(fake.botComments(7)) == 1 })
+	assert.Contains(t, fake.botComments(7)[0], "long answer")
 }
 
 func TestAProgressNoteIsAskedForOnceForEachQuietInterval(t *testing.T) {

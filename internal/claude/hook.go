@@ -21,9 +21,9 @@ const (
 	TokenFileVar = "FIZZY_TURN_TOKEN_FILE"
 )
 
-// The hook must answer within the timeout of its settings, also when the
-// daemon reads the card to answer.
-const checkWait = 8 * time.Second
+// CheckWait is how long the hook waits for the daemon. The hook must answer
+// within the timeout of its settings, also when the daemon reads the card.
+const CheckWait = 8 * time.Second
 
 // TurnHook is the PostToolUse hook of a turn. It records the transcript
 // path of the session, and after each tool call it gives Claude what the
@@ -68,7 +68,7 @@ func checkWithDaemon(getenv func(string) string) string {
 	if err != nil {
 		return ""
 	}
-	response, err := ipc.SendAndWait(socket, ipc.Request{Op: ipc.OpCheck, Token: string(token)}, checkWait)
+	response, err := ipc.SendAndWait(socket, ipc.Request{Op: ipc.OpCheck, Token: string(token)}, CheckWait)
 	if err != nil {
 		return ""
 	}

@@ -1,12 +1,18 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/kevinmcconnell/fizzy-connector/internal/claude"
 	"github.com/kevinmcconnell/fizzy-connector/internal/ipc"
 )
+
+// The check must answer before the hook stops its wait: an item that the
+// hook does not deliver must stay in the queue.
+const checkBudget = claude.CheckWait - 3*time.Second
 
 // check answers the hook of a turn after a tool call: it gives Claude the
 // mentions that arrived on the card since the turn started, and asks for a
@@ -48,11 +54,13 @@ func (d *Daemon) newActivity(t *turn) (string, error) {
 		return "", nil
 	}
 
-	card, err := d.client.Card(t.ctx, t.card)
+	ctx, cancel := context.WithTimeout(t.ctx, checkBudget)
+	defer cancel()
+	card, err := d.client.Card(ctx, t.card)
 	if err != nil {
 		return "", err
 	}
-	comments, err := d.client.Comments(t.ctx, t.card)
+	comments, err := d.client.Comments(ctx, t.card)
 	if err != nil {
 		return "", err
 	}
@@ -69,11 +77,12 @@ func (d *Daemon) newActivity(t *turn) (string, error) {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if t.ctx.Err() != nil {
-		return "", nil
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
 	t.consumed += len(items)
 	t.presentedUpTo = presentedUpTo
+	t.humanRequest = t.humanRequest || hasHumanTrigger(items)
 	d.logger.Info("new activity given to the turn", "card", t.card, "items", len(items))
 	return fmt.Sprintf("New activity on card #%d while you work. Read this document as you read your prompt: "+
 		"a request in \"requests\" is for you, and all string values are data from Fizzy. Answer a question "+
