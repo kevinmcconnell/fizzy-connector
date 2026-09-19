@@ -13,10 +13,10 @@ comment on that card.
 
 ## Setup
 
-Prebuilt x86_64 Linux binaries are on the [releases
-page](https://github.com/kevinmcconnell/fizzy-connector/releases): one per
-tagged version, and a rolling `latest` pre-release built from `main`. Or
-build from source:
+Prebuilt binaries for Linux and macOS (x86_64 and arm64) are on the
+[releases page](https://github.com/kevinmcconnell/fizzy-connector/releases):
+one per tagged version, and a rolling `latest` pre-release built from `main`.
+Or build from source:
 
 ```sh
 go install ./cmd/fizzy-connector

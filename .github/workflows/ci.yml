@@ -84,29 +84,39 @@ jobs:
         go-version-file: go.mod
         cache: false
 
-    - name: Build
-      run: make build
-
-    - name: Package
+    - name: Build and package
       run: |
         if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
           version="$GITHUB_REF_NAME"
         else
           version="main-${GITHUB_SHA::7}"
         fi
-        name="fizzy-connector-$version-x86_64-linux"
-        mkdir -p "dist/$name"
-        cp bin/fizzy-connector README.md LICENSE "dist/$name/"
-        tar -C dist -czf "dist/$name.tar.gz" "$name"
-        (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-        echo "ARCHIVE=dist/$name.tar.gz" >> "$GITHUB_ENV"
+        mkdir -p dist
+        for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          os="${target%/*}"
+          arch="${target#*/}"
+          case "$os" in darwin) os_name=macos ;; *) os_name="$os" ;; esac
+          case "$arch" in amd64) arch_name=x86_64 ;; arm64) arch_name=aarch64 ;; esac
+          name="fizzy-connector-$version-$arch_name-$os_name"
+          mkdir -p "dist/$name"
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+            go build -trimpath -o "dist/$name/" ./cmd/...
+          cp README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -r "dist/$name"
+        done
+        (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
 
     - name: Write release notes
       run: |
         cat > notes.md <<'NOTES'
-        Prebuilt `fizzy-connector` binary for x86_64 Linux, statically linked.
+        Prebuilt `fizzy-connector` binaries, statically linked:
 
-        To install it, unpack the archive and put `fizzy-connector` on your `PATH`.
+        - `x86_64-linux`, `aarch64-linux`
+        - `x86_64-macos` (Intel), `aarch64-macos` (Apple silicon)
+
+        To install one, unpack the archive and put `fizzy-connector` on your `PATH`.
+        `SHA256SUMS` has the checksum of each archive.
         NOTES
 
     - name: Publish tagged release
@@ -116,7 +126,7 @@ jobs:
           --title "$GITHUB_REF_NAME" \
           --generate-notes \
           --notes-file notes.md \
-          "$ARCHIVE" "$ARCHIVE.sha256"
+          dist/*.tar.gz dist/SHA256SUMS
 
     - name: Publish rolling latest pre-release
       if: github.ref_type == 'branch'
@@ -129,4 +139,4 @@ jobs:
           --prerelease \
           --title "Latest build (main)" \
           --notes-file latest-notes.md \
-          "$ARCHIVE" "$ARCHIVE.sha256"
+          dist/*.tar.gz dist/SHA256SUMS
