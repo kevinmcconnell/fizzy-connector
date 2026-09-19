@@ -5,6 +5,7 @@ permissions: {}
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -41,6 +42,7 @@ jobs:
       uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
       with:
         go-version-file: go.mod
+        cache: false
 
     - name: Install golangci-lint
       uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
@@ -58,3 +60,73 @@ jobs:
 
     - name: Lint
       run: make lint
+
+  release:
+    needs: [lint-actions, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      with:
+        persist-credentials: false
+
+    - name: Set up Go
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Build
+      run: make build
+
+    - name: Package
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          version="$GITHUB_REF_NAME"
+        else
+          version="main-${GITHUB_SHA::7}"
+        fi
+        name="fizzy-connector-$version-x86_64-linux"
+        mkdir -p "dist/$name"
+        cp bin/fizzy-connector README.md LICENSE "dist/$name/"
+        tar -C dist -czf "dist/$name.tar.gz" "$name"
+        (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+        echo "ARCHIVE=dist/$name.tar.gz" >> "$GITHUB_ENV"
+
+    - name: Write release notes
+      run: |
+        cat > notes.md <<'NOTES'
+        Prebuilt `fizzy-connector` binary for x86_64 Linux, statically linked.
+
+        To install it, unpack the archive and put `fizzy-connector` on your `PATH`.
+        NOTES
+
+    - name: Publish tagged release
+      if: github.ref_type == 'tag'
+      run: |
+        gh release create "$GITHUB_REF_NAME" \
+          --title "$GITHUB_REF_NAME" \
+          --generate-notes \
+          --notes-file notes.md \
+          "$ARCHIVE" "$ARCHIVE.sha256"
+
+    - name: Publish rolling latest pre-release
+      if: github.ref_type == 'branch'
+      run: |
+        gh release delete latest --cleanup-tag --yes || true
+        printf 'Automated build of `main` at %s.\n\n' "$GITHUB_SHA" > latest-notes.md
+        cat notes.md >> latest-notes.md
+        gh release create latest \
+          --target "$GITHUB_SHA" \
+          --prerelease \
+          --title "Latest build (main)" \
+          --notes-file latest-notes.md \
+          "$ARCHIVE" "$ARCHIVE.sha256"
