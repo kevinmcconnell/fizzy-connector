@@ -5,6 +5,7 @@ permissions: {}
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -41,6 +42,7 @@ jobs:
       uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
       with:
         go-version-file: go.mod
+        cache: false
 
     - name: Install golangci-lint
       uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
@@ -58,3 +60,83 @@ jobs:
 
     - name: Lint
       run: make lint
+
+  release:
+    needs: [lint-actions, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      with:
+        persist-credentials: false
+
+    - name: Set up Go
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Build and package
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          version="$GITHUB_REF_NAME"
+        else
+          version="main-${GITHUB_SHA::7}"
+        fi
+        mkdir -p dist
+        for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          os="${target%/*}"
+          arch="${target#*/}"
+          case "$os" in darwin) os_name=macos ;; *) os_name="$os" ;; esac
+          case "$arch" in amd64) arch_name=x86_64 ;; arm64) arch_name=aarch64 ;; esac
+          name="fizzy-connector-$version-$arch_name-$os_name"
+          mkdir -p "dist/$name"
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+            go build -trimpath -o "dist/$name/" ./cmd/...
+          cp README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -r "dist/$name"
+        done
+        (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
+
+    - name: Write release notes
+      run: |
+        cat > notes.md <<'NOTES'
+        Prebuilt `fizzy-connector` binaries, statically linked:
+
+        - `x86_64-linux`, `aarch64-linux`
+        - `x86_64-macos` (Intel), `aarch64-macos` (Apple silicon)
+
+        To install one, unpack the archive and put `fizzy-connector` on your `PATH`.
+        `SHA256SUMS` has the checksum of each archive.
+        NOTES
+
+    - name: Publish tagged release
+      if: github.ref_type == 'tag'
+      run: |
+        gh release create "$GITHUB_REF_NAME" \
+          --title "$GITHUB_REF_NAME" \
+          --generate-notes \
+          --notes-file notes.md \
+          dist/*.tar.gz dist/SHA256SUMS
+
+    - name: Publish rolling latest pre-release
+      if: github.ref_type == 'branch'
+      run: |
+        gh release delete latest --cleanup-tag --yes || true
+        printf 'Automated build of the main branch at %s.\n\n' "$GITHUB_SHA" > latest-notes.md
+        cat notes.md >> latest-notes.md
+        gh release create latest \
+          --target "$GITHUB_SHA" \
+          --prerelease \
+          --title "Latest build (main)" \
+          --notes-file latest-notes.md \
+          dist/*.tar.gz dist/SHA256SUMS
