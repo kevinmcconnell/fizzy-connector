@@ -167,6 +167,13 @@ func TestTheGuardPriceOfAnUnknownModelIsTheTopOfEachRate(t *testing.T) {
 	assert.Equal(t, priceOf("claude-sonnet-5"), guardPrice("claude-sonnet-5"))
 }
 
+func TestAResultOverTheCostLimitDoesNotStopTheStream(t *testing.T) {
+	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 100) + "\n" +
+		`{"type":"result","result":"done","total_cost_usd":3.5}` + "\n"
+
+	parseStream(strings.NewReader(stream), io.Discard, 1, func() { t.Fatal("stopped at the result") })
+}
+
 func TestNoCostLimitNeverStopsTheStream(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000000)
 

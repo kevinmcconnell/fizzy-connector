@@ -264,7 +264,8 @@ type stream struct {
 }
 
 // parseStream reads the events of the turn. It calls overLimit once, when
-// the estimated cost so far goes over a limit that is not zero.
+// an API call takes the estimated cost over a limit that is not zero. A
+// result event does not: the answer is there, so the turn is not stopped.
 func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()) stream {
 	var result Result
 	var calls []call
@@ -299,6 +300,10 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 				index[ev.Message.ID] = len(calls)
 				calls = append(calls, c)
 			}
+			if limit > 0 && !limitReached && guardEstimate() > limit {
+				limitReached = true
+				overLimit()
+			}
 		case ev.Type == "result":
 			// A process can report more than one result, when a background
 			// task of Claude ends and starts another turn. The cost of a
@@ -306,10 +311,6 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 			result.Text = ev.Result
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
-		}
-		if limit > 0 && !limitReached && guardEstimate() > limit {
-			limitReached = true
-			overLimit()
 		}
 	}
 	io.Copy(io.Discard, input)
