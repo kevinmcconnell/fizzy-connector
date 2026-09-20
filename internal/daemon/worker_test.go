@@ -22,8 +22,25 @@ func TestAStoppedTurnGetsAReplyThatSaysSo(t *testing.T) {
 	result := claude.Result{Usage: claude.Usage{APICalls: 54}}
 	err := fmt.Errorf("turn stopped: %w", context.DeadlineExceeded)
 
-	reply := fallbackReply(result, err, 30*time.Minute)
+	reply := fallbackReply(result, err, 30*time.Minute, 100)
 
 	assert.Contains(t, reply, "turn timeout of 30m0s")
 	assert.Contains(t, reply, "54 API calls")
+}
+
+func TestATurnOverTheCostLimitGetsAReplyThatSaysSo(t *testing.T) {
+	result := claude.Result{Usage: claude.Usage{APICalls: 54, CostUSD: 101.5}}
+	err := fmt.Errorf("turn stopped: %w", claude.ErrCostLimit)
+
+	reply := fallbackReply(result, err, 30*time.Minute, 100)
+
+	assert.Contains(t, reply, "cost limit of $100.00")
+	assert.Contains(t, reply, "54 API calls")
+	assert.Contains(t, reply, "estimated $101.50")
+
+	unpriced := claude.Result{Usage: claude.Usage{APICalls: 54}}
+	reply = fallbackReply(unpriced, err, 30*time.Minute, 100)
+
+	assert.Contains(t, reply, "after 54 API calls. ")
+	assert.NotContains(t, reply, "estimated")
 }

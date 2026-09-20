@@ -37,6 +37,9 @@ type Turn struct {
 	Model          string
 	Effort         string
 	Log            io.Writer
+	// MaxCostUSD stops the turn when its estimated cost goes over it. Zero
+	// is no limit.
+	MaxCostUSD float64
 	// Env has variables for the claude process, in addition to the
 	// environment of the daemon.
 	Env []string
@@ -177,12 +180,18 @@ func (t Turn) hookSettings() string {
 // ErrNotStarted means that the claude process did not start.
 var ErrNotStarted = errors.New("claude did not start")
 
+// ErrCostLimit means that the turn was stopped because its estimated cost
+// went over the limit.
+var ErrCostLimit = errors.New("the cost limit of the turn was reached")
+
 const stopGrace = 10 * time.Second
 
 func (t Turn) Run(ctx context.Context) (Result, error) {
 	output, outputWriter := io.Pipe()
+	runCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
 
-	cmd := exec.CommandContext(ctx, t.ClaudePath, t.Args()...)
+	cmd := exec.CommandContext(runCtx, t.ClaudePath, t.Args()...)
 	cmd.Dir = t.Dir
 	cmd.Stdin = strings.NewReader(t.Prompt)
 	cmd.Stdout = outputWriter
@@ -217,7 +226,9 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	}
 
 	parsed := make(chan stream, 1)
-	go func() { parsed <- parseStream(output, t.Log) }()
+	go func() {
+		parsed <- parseStream(output, t.Log, t.MaxCostUSD, func() { stop(ErrCostLimit) })
+	}()
 
 	waitErr := cmd.Wait()
 	// A command that Claude left in the background must not live longer than
@@ -234,10 +245,14 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	}
 	result.Usage = sumUsage(calls, parsedStream.resultCost)
 
+	// An answer that arrived with the stop is an answer.
+	if errors.Is(context.Cause(runCtx), ErrCostLimit) && !parsedStream.answeredAfterStop {
+		return result, fmt.Errorf("turn stopped: %w", ErrCostLimit)
+	}
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("turn stopped: %w", ctx.Err())
 	}
-	if waitErr != nil && result.Text == "" {
+	if waitErr != nil && result.Text == "" && !errors.Is(context.Cause(runCtx), ErrCostLimit) {
 		return result, fmt.Errorf("claude: %w", waitErr)
 	}
 	return result, nil
@@ -247,13 +262,29 @@ type stream struct {
 	result     Result
 	calls      []call
 	resultCost float64
+	// answeredAfterStop is set when the last result arrived after the call
+	// that took the cost over the limit, and is an answer: the turn was
+	// complete when it stopped.
+	answeredAfterStop bool
 }
 
-func parseStream(input io.Reader, log io.Writer) stream {
+// parseStream reads the events of the turn. It calls overLimit once, when
+// an API call takes the estimated cost over a limit that is not zero. A
+// result event does not: the answer is there, so the turn is not stopped.
+func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()) stream {
 	var result Result
 	var calls []call
 	index := map[string]int{}
 	resultCost := 0.0
+	limitReached := false
+	answeredAfterStop := false
+	guardEstimate := func() float64 {
+		estimate := 0.0
+		for _, c := range calls {
+			estimate += guardPrice(c.model).cost(c.tokens)
+		}
+		return max(estimate, resultCost)
+	}
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 0, 1<<20), 64<<20)
 	for scanner.Scan() {
@@ -275,6 +306,10 @@ func parseStream(input io.Reader, log io.Writer) stream {
 				index[ev.Message.ID] = len(calls)
 				calls = append(calls, c)
 			}
+			if limit > 0 && !limitReached && guardEstimate() > limit {
+				limitReached = true
+				overLimit()
+			}
 		case ev.Type == "result":
 			// A process can report more than one result, when a background
 			// task of Claude ends and starts another turn. The cost of a
@@ -282,10 +317,13 @@ func parseStream(input io.Reader, log io.Writer) stream {
 			result.Text = ev.Result
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
+			if limitReached {
+				answeredAfterStop = !ev.IsError && ev.Result != ""
+			}
 		}
 	}
 	io.Copy(io.Discard, input)
-	return stream{result: result, calls: calls, resultCost: resultCost}
+	return stream{result: result, calls: calls, resultCost: resultCost, answeredAfterStop: answeredAfterStop}
 }
 
 // sumUsage adds the calls up. The cost that Claude Code reports covers the

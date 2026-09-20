@@ -58,6 +58,10 @@ type Daemon struct {
 	approvalGates map[int]chan struct{}
 	pendingScans  map[int]bool
 	workers       sync.WaitGroup
+
+	// logFiles serializes the open of a card log with the sweep of the
+	// old logs.
+	logFiles sync.Mutex
 }
 
 // turn is one running Claude turn. Its token authenticates the MCP server of
@@ -142,6 +146,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	go d.watchCable(d.drain)
+	go d.sweepLogs(d.drain)
 
 	d.logger.Info("watching for mentions", "permission_mode", d.cfg.PermissionMode, "user", d.botName, "fizzy", d.cfg.BaseURL, "repo", d.cfg.Repo)
 	d.fetchLoop(d.drain)

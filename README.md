@@ -107,7 +107,15 @@ short question cost as much as some minutes of work on a small session. Use
 the next turn starts from the card content, and the old transcript stays on
 disk for `attach`.
 
+A turn is also stopped when its estimated cost goes over `max_cost_per_turn`
+($100 by default; 0 turns the limit off). The reply on the card says so. For
+the limit, a model that has no price in the table costs as much as the most
+expensive one.
+
 Logs of each turn are in `~/.local/state/fizzy-connector/<account>/logs/card-N.log`.
+A log is trimmed to 20 MB when it grows past that, and the daemon deletes a
+log that no turn wrote to for `log_retention` (30 days by default; "0" keeps
+the logs forever). The card state, with the session and the costs, stays.
 
 ## Security
 

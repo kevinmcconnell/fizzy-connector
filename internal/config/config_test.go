@@ -1,9 +1,11 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,14 +56,19 @@ func TestLegacyStateMovesOnlyWhenNoAccountStateExists(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	invalid := map[string]func(*Config){
-		"bot is trusted":         func(c *Config) { c.TrustedUserIDs = append(c.TrustedUserIDs, c.BotUserID) },
-		"poll interval of zero":  func(c *Config) { c.PollInterval.Duration = 0 },
-		"turn timeout of zero":   func(c *Config) { c.TurnTimeout.Duration = 0 },
-		"approval timeout large": func(c *Config) { c.ApprovalTimeout.Duration = 2 * c.TurnTimeout.Duration },
-		"permission mode":        func(c *Config) { c.PermissionMode = "everything" },
-		"effort level":           func(c *Config) { c.Effort = "extreme" },
-		"base URL":               func(c *Config) { c.BaseURL = "fizzy.example" },
-		"relative repo":          func(c *Config) { c.Repo = "work" },
+		"bot is trusted":          func(c *Config) { c.TrustedUserIDs = append(c.TrustedUserIDs, c.BotUserID) },
+		"poll interval of zero":   func(c *Config) { c.PollInterval.Duration = 0 },
+		"turn timeout of zero":    func(c *Config) { c.TurnTimeout.Duration = 0 },
+		"approval timeout large":  func(c *Config) { c.ApprovalTimeout.Duration = 2 * c.TurnTimeout.Duration },
+		"permission mode":         func(c *Config) { c.PermissionMode = "everything" },
+		"effort level":            func(c *Config) { c.Effort = "extreme" },
+		"base URL":                func(c *Config) { c.BaseURL = "fizzy.example" },
+		"relative repo":           func(c *Config) { c.Repo = "work" },
+		"negative cost limit":     func(c *Config) { c.MaxCostPerTurn = -1 },
+		"cost limit of NaN":       func(c *Config) { c.MaxCostPerTurn = math.NaN() },
+		"cost limit of Inf":       func(c *Config) { c.MaxCostPerTurn = math.Inf(1) },
+		"negative log retention":  func(c *Config) { c.LogRetention.Duration = -time.Hour },
+		"log retention in a turn": func(c *Config) { c.LogRetention.Duration = c.TurnTimeout.Duration },
 	}
 	require.NoError(t, testConfig(t).validate())
 	withEffort := testConfig(t)

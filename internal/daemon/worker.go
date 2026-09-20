@@ -138,7 +138,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 
 	pendingReply := ""
 	if ended.humanRequest && !ended.answered() {
-		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
+		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration, d.cfg.MaxCostPerTurn)
 	}
 
 	saved, err := d.store.Update(number, func(saved *store.CardState) {
@@ -220,6 +220,7 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		Approvals:      d.cfg.Approvals,
 		ToolTimeout:    d.cfg.TurnTimeout.Duration,
 		Log:            logFile,
+		MaxCostUSD:     d.cfg.MaxCostPerTurn,
 		Model:          d.cfg.Model,
 		Effort:         d.cfg.Effort,
 		Env:            d.cfg.ClaudeEnv(),
@@ -252,8 +253,15 @@ func warningBefore(timeout time.Duration) time.Duration {
 
 // fallbackReply makes sure that each mention from a person gets an answer,
 // also when Claude did not call the reply tool.
-func fallbackReply(result claude.Result, runErr error, timeout time.Duration) string {
+func fallbackReply(result claude.Result, runErr error, timeout time.Duration, maxCost float64) string {
 	switch {
+	case errors.Is(runErr, claude.ErrCostLimit):
+		estimate := ""
+		if result.Usage.CostUSD > 0 {
+			estimate = fmt.Sprintf(", at an estimated $%.2f", result.Usage.CostUSD)
+		}
+		return fmt.Sprintf("The cost limit of $%.2f per turn stopped this turn after %d API calls%s. "+
+			"Work that was committed or written to disk is kept. Mention me again to continue.", maxCost, result.Usage.APICalls, estimate)
 	case errors.Is(runErr, context.DeadlineExceeded):
 		return fmt.Sprintf("The turn timeout of %s stopped this turn after %d API calls. "+
 			"Work that was committed or written to disk is kept. Mention me again to continue.", timeout, result.Usage.APICalls)
@@ -267,8 +275,18 @@ func fallbackReply(result claude.Result, runErr error, timeout time.Duration) st
 	return "I completed the turn, but I have no answer to post."
 }
 
+func (d *Daemon) logDir() string {
+	return filepath.Join(d.cfg.DataDir(), "logs")
+}
+
+// openLog opens the log of a card for a turn, and marks it as written to
+// now, so that the sweep of the old logs does not delete it before the
+// first write of the turn.
 func (d *Daemon) openLog(number int) (*os.File, error) {
-	dir := filepath.Join(d.cfg.DataDir(), "logs")
+	d.logFiles.Lock()
+	defer d.logFiles.Unlock()
+
+	dir := d.logDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -276,7 +294,16 @@ func (d *Daemon) openLog(number int) (*os.File, error) {
 	if err := trimLog(path, maxLogSize); err != nil {
 		d.logger.Warn("log not trimmed", "card", number, "error", err)
 	}
-	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 // trimLog keeps the newest half of the limit when a log is larger than the

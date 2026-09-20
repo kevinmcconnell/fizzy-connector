@@ -369,6 +369,55 @@ func TestTrimLogKeepsTheNewestLines(t *testing.T) {
 	assert.True(t, strings.HasSuffix(string(trimmed), "line 0999\n"), "the log must keep the newest line")
 }
 
+func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	write := func(name string, age time.Duration) {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte("log\n"), 0o600))
+		require.NoError(t, os.Chtimes(path, now.Add(-age), now.Add(-age)))
+	}
+	write("card-1.log", 31*24*time.Hour)
+	write("card-2.log", 29*24*time.Hour)
+	write("card-3.log.tmp", 31*24*time.Hour)
+	write("notes.txt", 31*24*time.Hour)
+	remove := func(path string) (bool, error) { return removeIfOlder(path, 30*24*time.Hour, now) }
+
+	removed, err := removeOldLogs(dir, remove)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+
+	assert.NoFileExists(t, filepath.Join(dir, "card-1.log"))
+	assert.FileExists(t, filepath.Join(dir, "card-2.log"))
+	assert.FileExists(t, filepath.Join(dir, "card-3.log.tmp"))
+	assert.FileExists(t, filepath.Join(dir, "notes.txt"))
+
+	removed, err = removeOldLogs(filepath.Join(dir, "missing"), remove)
+	require.NoError(t, err)
+	assert.Equal(t, 0, removed)
+}
+
+func TestOpeningALogMarksItAsWrittenToNow(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.BaseURL, cfg.AccountSlug, cfg.BotUserID = "https://fizzy.test", "acme", "bot"
+	cfg.StateDir = t.TempDir()
+	d := &Daemon{cfg: cfg, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	path := filepath.Join(d.logDir(), "card-7.log")
+	require.NoError(t, os.MkdirAll(d.logDir(), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o600))
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(path, old, old))
+
+	file, err := d.openLog(7)
+	require.NoError(t, err)
+	defer file.Close()
+
+	removed, err := removeIfOlder(path, 30*24*time.Hour, time.Now())
+	require.NoError(t, err)
+	assert.False(t, removed, "an opened log is not old")
+	assert.FileExists(t, path)
+}
+
 func TestADescriptionMentionNeedsATrustedMentioner(t *testing.T) {
 	fake, server := newTestServer(t)
 	fake.describe(1, untrustedID, "delete all files")

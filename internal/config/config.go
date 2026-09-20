@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,9 +39,11 @@ type Config struct {
 
 	MaxConcurrent    int      `toml:"max_concurrent"`
 	TurnTimeout      Duration `toml:"turn_timeout"`
+	MaxCostPerTurn   float64  `toml:"max_cost_per_turn"`
 	ApprovalTimeout  Duration `toml:"approval_timeout"`
 	ProgressInterval Duration `toml:"progress_interval"`
 	PollInterval     Duration `toml:"poll_interval"`
+	LogRetention     Duration `toml:"log_retention"`
 	StateDir         string   `toml:"state_dir"`
 
 	Path string `toml:"-"`
@@ -97,9 +100,11 @@ func Defaults() *Config {
 		},
 		MaxConcurrent:    4,
 		TurnTimeout:      Duration{30 * time.Minute},
+		MaxCostPerTurn:   100,
 		ApprovalTimeout:  Duration{10 * time.Minute},
 		ProgressInterval: Duration{10 * time.Minute},
 		PollInterval:     Duration{3 * time.Second},
+		LogRetention:     Duration{30 * 24 * time.Hour},
 		StateDir:         defaultStateDir(),
 	}
 }
@@ -159,10 +164,14 @@ func (c *Config) validate() error {
 		return errors.New("config: poll_interval must be 100ms or more")
 	case c.TurnTimeout.Duration < time.Minute:
 		return errors.New("config: turn_timeout must be 1m or more")
+	case c.MaxCostPerTurn < 0 || math.IsNaN(c.MaxCostPerTurn) || math.IsInf(c.MaxCostPerTurn, 0):
+		return errors.New("config: max_cost_per_turn must be 0 or more")
 	case c.ApprovalTimeout.Duration < 10*time.Second || c.ApprovalTimeout.Duration > c.TurnTimeout.Duration:
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")
 	case c.ProgressInterval.Duration < 0:
 		return errors.New("config: progress_interval must be 0 or more")
+	case c.LogRetention.Duration != 0 && c.LogRetention.Duration < 2*c.TurnTimeout.Duration:
+		return errors.New("config: log_retention must be 0, or at least twice turn_timeout")
 	}
 	if parsed, err := url.Parse(c.BaseURL); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("config: base_url %q is not an http or https URL", c.BaseURL)
@@ -392,12 +401,20 @@ approval_timeout = {{printf "%q" .ApprovalTimeout.String}}
 max_concurrent = {{.MaxConcurrent}}
 turn_timeout = {{printf "%q" .TurnTimeout.String}}
 
+# A turn is stopped when its estimated cost, in dollars at API prices,
+# goes over this limit. 0 turns the limit off.
+max_cost_per_turn = {{.MaxCostPerTurn}}
+
 # When a turn runs this long without a comment on the card, Claude is asked
 # for a short progress note. "0" turns the notes off.
 progress_interval = {{printf "%q" .ProgressInterval.String}}
 
 # Fetch interval when the websocket is not connected.
 poll_interval = {{printf "%q" .PollInterval.String}}
+
+# The log of a card is deleted when no turn wrote to it for this long.
+# "0" keeps the logs forever. Otherwise it must be at least twice turn_timeout.
+log_retention = {{printf "%q" .LogRetention.String}}
 
 # Sessions, queues, logs and the websocket login.
 state_dir = {{printf "%q" .StateDir}}
