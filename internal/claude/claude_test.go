@@ -206,6 +206,11 @@ func TestAnEarlierResultIsNotTheAnswerOfAStoppedTurn(t *testing.T) {
 	parsed = parseStream(strings.NewReader(stream), io.Discard, 1, func() {})
 
 	assert.True(t, parsed.answeredAfterStop)
+
+	stream += "\n" + `{"type":"result","result":"interrupted","is_error":true}`
+	parsed = parseStream(strings.NewReader(stream), io.Discard, 1, func() {})
+
+	assert.False(t, parsed.answeredAfterStop, "the last result decides")
 }
 
 func TestNoCostLimitNeverStopsTheStream(t *testing.T) {

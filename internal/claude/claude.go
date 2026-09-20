@@ -262,8 +262,9 @@ type stream struct {
 	result     Result
 	calls      []call
 	resultCost float64
-	// answeredAfterStop is set when a result arrived after the call that
-	// took the cost over the limit: the turn was complete when it stopped.
+	// answeredAfterStop is set when the last result arrived after the call
+	// that took the cost over the limit, and is an answer: the turn was
+	// complete when it stopped.
 	answeredAfterStop bool
 }
 
@@ -316,8 +317,8 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 			result.Text = ev.Result
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
-			if limitReached && !ev.IsError && ev.Result != "" {
-				answeredAfterStop = true
+			if limitReached {
+				answeredAfterStop = !ev.IsError && ev.Result != ""
 			}
 		}
 	}
