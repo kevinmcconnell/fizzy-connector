@@ -246,7 +246,7 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	result.Usage = sumUsage(calls, parsedStream.resultCost)
 
 	// An answer that arrived with the stop is an answer.
-	if errors.Is(context.Cause(runCtx), ErrCostLimit) && result.Text == "" {
+	if errors.Is(context.Cause(runCtx), ErrCostLimit) && !parsedStream.answeredAfterStop {
 		return result, fmt.Errorf("turn stopped: %w", ErrCostLimit)
 	}
 	if ctx.Err() != nil {
@@ -262,6 +262,9 @@ type stream struct {
 	result     Result
 	calls      []call
 	resultCost float64
+	// answeredAfterStop is set when a result arrived after the call that
+	// took the cost over the limit: the turn was complete when it stopped.
+	answeredAfterStop bool
 }
 
 // parseStream reads the events of the turn. It calls overLimit once, when
@@ -273,6 +276,7 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 	index := map[string]int{}
 	resultCost := 0.0
 	limitReached := false
+	answeredAfterStop := false
 	guardEstimate := func() float64 {
 		estimate := 0.0
 		for _, c := range calls {
@@ -312,10 +316,13 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 			result.Text = ev.Result
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
+			if limitReached {
+				answeredAfterStop = true
+			}
 		}
 	}
 	io.Copy(io.Discard, input)
-	return stream{result: result, calls: calls, resultCost: resultCost}
+	return stream{result: result, calls: calls, resultCost: resultCost, answeredAfterStop: answeredAfterStop}
 }
 
 // sumUsage adds the calls up. The cost that Claude Code reports covers the

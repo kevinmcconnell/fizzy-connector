@@ -186,6 +186,23 @@ func TestAResultOverTheCostLimitDoesNotStopTheStream(t *testing.T) {
 	parseStream(strings.NewReader(stream), io.Discard, 1, func() { t.Fatal("stopped at the result") })
 }
 
+func TestAnEarlierResultIsNotTheAnswerOfAStoppedTurn(t *testing.T) {
+	stream := strings.Join([]string{
+		assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 100),
+		`{"type":"result","result":"first"}`,
+		assistantEvent("m2", "claude-fable-5-1", nil, 0, 0, 0, 100000),
+	}, "\n")
+
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 1, func() {})
+
+	assert.False(t, parsed.answeredAfterStop)
+
+	stream += "\n" + `{"type":"result","result":"second"}`
+	parsed = parseStream(strings.NewReader(stream), io.Discard, 1, func() {})
+
+	assert.True(t, parsed.answeredAfterStop)
+}
+
 func TestNoCostLimitNeverStopsTheStream(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000000)
 
