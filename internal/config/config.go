@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -163,7 +164,7 @@ func (c *Config) validate() error {
 		return errors.New("config: poll_interval must be 100ms or more")
 	case c.TurnTimeout.Duration < time.Minute:
 		return errors.New("config: turn_timeout must be 1m or more")
-	case c.MaxCostPerTurn < 0:
+	case c.MaxCostPerTurn < 0 || math.IsNaN(c.MaxCostPerTurn) || math.IsInf(c.MaxCostPerTurn, 0):
 		return errors.New("config: max_cost_per_turn must be 0 or more")
 	case c.ApprovalTimeout.Duration < 10*time.Second || c.ApprovalTimeout.Duration > c.TurnTimeout.Duration:
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")

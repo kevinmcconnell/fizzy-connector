@@ -1,9 +1,11 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,6 +64,10 @@ func TestValidation(t *testing.T) {
 		"effort level":           func(c *Config) { c.Effort = "extreme" },
 		"base URL":               func(c *Config) { c.BaseURL = "fizzy.example" },
 		"relative repo":          func(c *Config) { c.Repo = "work" },
+		"negative cost limit":    func(c *Config) { c.MaxCostPerTurn = -1 },
+		"cost limit of NaN":      func(c *Config) { c.MaxCostPerTurn = math.NaN() },
+		"cost limit of Inf":      func(c *Config) { c.MaxCostPerTurn = math.Inf(1) },
+		"negative log retention": func(c *Config) { c.LogRetention.Duration = -time.Hour },
 	}
 	require.NoError(t, testConfig(t).validate())
 	withEffort := testConfig(t)

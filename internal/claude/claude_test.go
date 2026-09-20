@@ -162,6 +162,11 @@ func TestTheCostLimitPricesAnUnknownModelAsTheMostExpensive(t *testing.T) {
 	assert.Equal(t, 0.0, sumUsage(parsed.calls, parsed.resultCost).CostUSD, "the recorded cost has no estimate")
 }
 
+func TestTheGuardPriceOfAnUnknownModelIsTheTopOfEachRate(t *testing.T) {
+	assert.Equal(t, price{10, 20, 0.5, 50}, guardPrice("claude-other-9"))
+	assert.Equal(t, priceOf("claude-sonnet-5"), guardPrice("claude-sonnet-5"))
+}
+
 func TestNoCostLimitNeverStopsTheStream(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000000)
 

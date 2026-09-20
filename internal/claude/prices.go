@@ -38,10 +38,18 @@ func priceOf(model string) price {
 }
 
 // guardPrice is for the cost limit of a turn: a model that is not in the
-// table costs as much as the most expensive one, so that the limit holds.
+// table costs the highest rate of the table for each kind of token, so that
+// the limit holds.
 func guardPrice(model string) price {
 	if p := priceOf(model); p != (price{}) {
 		return p
 	}
-	return prices[0].price
+	var top price
+	for _, p := range prices {
+		top.input = max(top.input, p.price.input)
+		top.cacheWrite = max(top.cacheWrite, p.price.cacheWrite)
+		top.cacheRead = max(top.cacheRead, p.price.cacheRead)
+		top.output = max(top.output, p.price.output)
+	}
+	return top
 }
