@@ -299,7 +299,11 @@ func (d *Daemon) openLog(number int) (*os.File, error) {
 		return nil, err
 	}
 	now := time.Now()
-	return file, os.Chtimes(path, now, now)
+	if err := os.Chtimes(path, now, now); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 // trimLog keeps the newest half of the limit when a log is larger than the

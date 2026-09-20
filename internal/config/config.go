@@ -170,8 +170,8 @@ func (c *Config) validate() error {
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")
 	case c.ProgressInterval.Duration < 0:
 		return errors.New("config: progress_interval must be 0 or more")
-	case c.LogRetention.Duration < 0:
-		return errors.New("config: log_retention must be 0 or more")
+	case c.LogRetention.Duration != 0 && c.LogRetention.Duration < c.TurnTimeout.Duration:
+		return errors.New("config: log_retention must be 0, or not less than turn_timeout")
 	}
 	if parsed, err := url.Parse(c.BaseURL); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("config: base_url %q is not an http or https URL", c.BaseURL)
@@ -413,7 +413,7 @@ progress_interval = {{printf "%q" .ProgressInterval.String}}
 poll_interval = {{printf "%q" .PollInterval.String}}
 
 # The log of a card is deleted when no turn wrote to it for this long.
-# "0" keeps the logs forever.
+# "0" keeps the logs forever. Otherwise it must not be less than turn_timeout.
 log_retention = {{printf "%q" .LogRetention.String}}
 
 # Sessions, queues, logs and the websocket login.
