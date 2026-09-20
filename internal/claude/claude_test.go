@@ -51,6 +51,21 @@ func TestStopEndsTheProcessGroup(t *testing.T) {
 		"the child process %d is still alive", pid)
 }
 
+func TestTheCostLimitStopsTheProcess(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	expensive := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 100000)
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\necho '"+expensive+"'\nsleep 300\n"), 0o755))
+
+	started := time.Now()
+	result, err := Turn{ClaudePath: script, Dir: dir, SessionID: "s", Log: io.Discard, MaxCostUSD: 1}.Run(context.Background())
+
+	assert.ErrorIs(t, err, ErrCostLimit)
+	assert.True(t, result.SessionStarted)
+	assert.Equal(t, 1, result.Usage.APICalls)
+	assert.Less(t, time.Since(started), 30*time.Second, "the process kept the turn open")
+}
+
 func TestStartFailureIsReported(t *testing.T) {
 	_, err := Turn{ClaudePath: "/does/not/exist", Dir: t.TempDir(), Log: io.Discard}.Run(context.Background())
 
@@ -85,7 +100,7 @@ func TestUsageComesFromTheMessagesOfTheStream(t *testing.T) {
 		`not json`,
 	}, "\n")
 
-	parsed := parseStream(strings.NewReader(stream), io.Discard)
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 0, nil)
 	result := parsed.result
 	result.Usage = sumUsage(parsed.calls, parsed.resultCost)
 
@@ -106,7 +121,7 @@ func TestAStoppedTurnHasItsUsage(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 2, 25000, 0, 100) + "\n" +
 		assistantEvent("m2", "claude-fable-5-1", nil, 32, 1000, 25000, 400) + "\n"
 
-	parsed := parseStream(strings.NewReader(stream), io.Discard)
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 0, nil)
 	result := sumUsage(parsed.calls, parsed.resultCost)
 
 	assert.Equal(t, 2, result.APICalls)
@@ -118,9 +133,29 @@ func TestTheReportedCostWinsWhenItIsHigher(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 2, 1000, 0, 100) + "\n" +
 		`{"type":"result","result":"done","total_cost_usd":3.5}` + "\n"
 
-	parsed := parseStream(strings.NewReader(stream), io.Discard)
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 0, nil)
 
 	assert.Equal(t, 3.5, sumUsage(parsed.calls, parsed.resultCost).CostUSD)
+}
+
+func TestTheCostLimitStopsTheStreamOnce(t *testing.T) {
+	stream := strings.Join([]string{
+		assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000),
+		assistantEvent("m2", "claude-fable-5-1", nil, 0, 0, 0, 1000),
+		assistantEvent("m3", "claude-fable-5-1", nil, 0, 0, 0, 1000),
+	}, "\n")
+	stops := 0
+
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 0.06, func() { stops++ })
+
+	assert.Equal(t, 1, stops, "the limit of $0.06 is passed at the second call of $0.05")
+	assert.Equal(t, 3, len(parsed.calls), "the stream is read to the end")
+}
+
+func TestNoCostLimitNeverStopsTheStream(t *testing.T) {
+	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000000)
+
+	parseStream(strings.NewReader(stream), io.Discard, 0, func() { t.Fatal("stopped without a limit") })
 }
 
 func TestAnUnknownModelHasNoEstimate(t *testing.T) {

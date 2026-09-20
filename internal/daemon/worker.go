@@ -138,7 +138,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 
 	pendingReply := ""
 	if ended.humanRequest && !ended.answered() {
-		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration)
+		pendingReply = fallbackReply(result, runErr, d.cfg.TurnTimeout.Duration, d.cfg.MaxCostPerTurn)
 	}
 
 	saved, err := d.store.Update(number, func(saved *store.CardState) {
@@ -220,6 +220,7 @@ func (d *Daemon) runClaude(ctx context.Context, t *turn, state *store.CardState,
 		Approvals:      d.cfg.Approvals,
 		ToolTimeout:    d.cfg.TurnTimeout.Duration,
 		Log:            logFile,
+		MaxCostUSD:     d.cfg.MaxCostPerTurn,
 		Model:          d.cfg.Model,
 		Effort:         d.cfg.Effort,
 		Env:            d.cfg.ClaudeEnv(),
@@ -252,8 +253,11 @@ func warningBefore(timeout time.Duration) time.Duration {
 
 // fallbackReply makes sure that each mention from a person gets an answer,
 // also when Claude did not call the reply tool.
-func fallbackReply(result claude.Result, runErr error, timeout time.Duration) string {
+func fallbackReply(result claude.Result, runErr error, timeout time.Duration, maxCost float64) string {
 	switch {
+	case errors.Is(runErr, claude.ErrCostLimit):
+		return fmt.Sprintf("The cost limit of $%.2f per turn stopped this turn after %d API calls, at an estimated $%.2f. "+
+			"Work that was committed or written to disk is kept. Mention me again to continue.", maxCost, result.Usage.APICalls, result.Usage.CostUSD)
 	case errors.Is(runErr, context.DeadlineExceeded):
 		return fmt.Sprintf("The turn timeout of %s stopped this turn after %d API calls. "+
 			"Work that was committed or written to disk is kept. Mention me again to continue.", timeout, result.Usage.APICalls)

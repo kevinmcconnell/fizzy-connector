@@ -38,6 +38,7 @@ type Config struct {
 
 	MaxConcurrent    int      `toml:"max_concurrent"`
 	TurnTimeout      Duration `toml:"turn_timeout"`
+	MaxCostPerTurn   float64  `toml:"max_cost_per_turn"`
 	ApprovalTimeout  Duration `toml:"approval_timeout"`
 	ProgressInterval Duration `toml:"progress_interval"`
 	PollInterval     Duration `toml:"poll_interval"`
@@ -98,6 +99,7 @@ func Defaults() *Config {
 		},
 		MaxConcurrent:    4,
 		TurnTimeout:      Duration{30 * time.Minute},
+		MaxCostPerTurn:   100,
 		ApprovalTimeout:  Duration{10 * time.Minute},
 		ProgressInterval: Duration{10 * time.Minute},
 		PollInterval:     Duration{3 * time.Second},
@@ -161,6 +163,8 @@ func (c *Config) validate() error {
 		return errors.New("config: poll_interval must be 100ms or more")
 	case c.TurnTimeout.Duration < time.Minute:
 		return errors.New("config: turn_timeout must be 1m or more")
+	case c.MaxCostPerTurn < 0:
+		return errors.New("config: max_cost_per_turn must be 0 or more")
 	case c.ApprovalTimeout.Duration < 10*time.Second || c.ApprovalTimeout.Duration > c.TurnTimeout.Duration:
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")
 	case c.ProgressInterval.Duration < 0:
@@ -395,6 +399,10 @@ approval_timeout = {{printf "%q" .ApprovalTimeout.String}}
 # Maximum number of claude processes that run at the same time.
 max_concurrent = {{.MaxConcurrent}}
 turn_timeout = {{printf "%q" .TurnTimeout.String}}
+
+# A turn is stopped when its estimated cost, in dollars at API prices,
+# goes over this limit. 0 turns the limit off.
+max_cost_per_turn = {{.MaxCostPerTurn}}
 
 # When a turn runs this long without a comment on the card, Claude is asked
 # for a short progress note. "0" turns the notes off.
