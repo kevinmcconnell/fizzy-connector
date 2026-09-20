@@ -58,6 +58,10 @@ type Daemon struct {
 	approvalGates map[int]chan struct{}
 	pendingScans  map[int]bool
 	workers       sync.WaitGroup
+
+	// logFiles serializes the open of a card log with the sweep of the
+	// old logs.
+	logFiles sync.Mutex
 }
 
 // turn is one running Claude turn. Its token authenticates the MCP server of

@@ -16,7 +16,7 @@ func (d *Daemon) sweepLogs(ctx context.Context) {
 		return
 	}
 	for {
-		removed, err := removeOldLogs(d.logDir(), d.removeUnusedLog)
+		removed, err := removeOldLogs(d.logDir(), d.removeOldLog)
 		if err != nil {
 			d.logger.Warn("log sweep failed", "error", err)
 		} else if removed > 0 {
@@ -30,16 +30,12 @@ func (d *Daemon) sweepLogs(ctx context.Context) {
 	}
 }
 
-// removeUnusedLog deletes the log of a card when no turn wrote to it for
-// the retention, unless a turn of the card is in progress: the turn may have
-// opened the log before its first write. The checks and the deletion are one
-// step under the mutex, so a turn cannot start or end in between.
-func (d *Daemon) removeUnusedLog(card int, path string) (bool, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.running[card] {
-		return false, nil
-	}
+// removeOldLog deletes the log of a card when no turn wrote to it for the
+// retention. The check and the deletion are one step under the lock that
+// openLog takes, so a turn cannot open the log in between.
+func (d *Daemon) removeOldLog(path string) (bool, error) {
+	d.logFiles.Lock()
+	defer d.logFiles.Unlock()
 	return removeIfOlder(path, d.cfg.LogRetention.Duration, time.Now())
 }
 
@@ -59,7 +55,7 @@ func removeIfOlder(path string, retention time.Duration, now time.Time) (bool, e
 
 // removeOldLogs gives each card log to remove, and returns how many were
 // deleted.
-func removeOldLogs(dir string, remove func(card int, path string) (bool, error)) (int, error) {
+func removeOldLogs(dir string, remove func(path string) (bool, error)) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return 0, nil
@@ -73,7 +69,7 @@ func removeOldLogs(dir string, remove func(card int, path string) (bool, error))
 		if _, err := fmt.Sscanf(entry.Name(), "card-%d.log", &card); err != nil || entry.Name() != fmt.Sprintf("card-%d.log", card) {
 			continue
 		}
-		deleted, err := remove(card, filepath.Join(dir, entry.Name()))
+		deleted, err := remove(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return removed, err
 		}

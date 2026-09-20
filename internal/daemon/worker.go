@@ -279,7 +279,13 @@ func (d *Daemon) logDir() string {
 	return filepath.Join(d.cfg.DataDir(), "logs")
 }
 
+// openLog opens the log of a card for a turn, and marks it as written to
+// now, so that the sweep of the old logs does not delete it before the
+// first write of the turn.
 func (d *Daemon) openLog(number int) (*os.File, error) {
+	d.logFiles.Lock()
+	defer d.logFiles.Unlock()
+
 	dir := d.logDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -288,7 +294,12 @@ func (d *Daemon) openLog(number int) (*os.File, error) {
 	if err := trimLog(path, maxLogSize); err != nil {
 		d.logger.Warn("log not trimmed", "card", number, "error", err)
 	}
-	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	return file, os.Chtimes(path, now, now)
 }
 
 // trimLog keeps the newest half of the limit when a log is larger than the

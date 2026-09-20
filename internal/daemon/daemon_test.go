@@ -380,14 +380,8 @@ func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
 	write("card-1.log", 31*24*time.Hour)
 	write("card-2.log", 29*24*time.Hour)
 	write("card-3.log.tmp", 31*24*time.Hour)
-	write("card-4.log", 31*24*time.Hour)
 	write("notes.txt", 31*24*time.Hour)
-	remove := func(card int, path string) (bool, error) {
-		if card == 4 {
-			return false, nil
-		}
-		return removeIfOlder(path, 30*24*time.Hour, now)
-	}
+	remove := func(path string) (bool, error) { return removeIfOlder(path, 30*24*time.Hour, now) }
 
 	removed, err := removeOldLogs(dir, remove)
 	require.NoError(t, err)
@@ -396,12 +390,32 @@ func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, "card-1.log"))
 	assert.FileExists(t, filepath.Join(dir, "card-2.log"))
 	assert.FileExists(t, filepath.Join(dir, "card-3.log.tmp"))
-	assert.FileExists(t, filepath.Join(dir, "card-4.log"), "the log of a running turn stays")
 	assert.FileExists(t, filepath.Join(dir, "notes.txt"))
 
 	removed, err = removeOldLogs(filepath.Join(dir, "missing"), remove)
 	require.NoError(t, err)
 	assert.Equal(t, 0, removed)
+}
+
+func TestOpeningALogMarksItAsWrittenToNow(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.BaseURL, cfg.AccountSlug, cfg.BotUserID = "https://fizzy.test", "acme", "bot"
+	cfg.StateDir = t.TempDir()
+	d := &Daemon{cfg: cfg, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	path := filepath.Join(d.logDir(), "card-7.log")
+	require.NoError(t, os.MkdirAll(d.logDir(), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o600))
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(path, old, old))
+
+	file, err := d.openLog(7)
+	require.NoError(t, err)
+	defer file.Close()
+
+	removed, err := removeIfOlder(path, 30*24*time.Hour, time.Now())
+	require.NoError(t, err)
+	assert.False(t, removed, "an opened log is not old")
+	assert.FileExists(t, path)
 }
 
 func TestADescriptionMentionNeedsATrustedMentioner(t *testing.T) {
