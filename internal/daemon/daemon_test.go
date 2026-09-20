@@ -369,6 +369,33 @@ func TestTrimLogKeepsTheNewestLines(t *testing.T) {
 	assert.True(t, strings.HasSuffix(string(trimmed), "line 0999\n"), "the log must keep the newest line")
 }
 
+func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	write := func(name string, age time.Duration) {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte("log\n"), 0o600))
+		require.NoError(t, os.Chtimes(path, now.Add(-age), now.Add(-age)))
+	}
+	write("card-1.log", 31*24*time.Hour)
+	write("card-2.log", 29*24*time.Hour)
+	write("card-3.log.tmp", 31*24*time.Hour)
+	write("notes.txt", 31*24*time.Hour)
+
+	removed, err := removeOldLogs(dir, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+
+	assert.NoFileExists(t, filepath.Join(dir, "card-1.log"))
+	assert.FileExists(t, filepath.Join(dir, "card-2.log"))
+	assert.FileExists(t, filepath.Join(dir, "card-3.log.tmp"))
+	assert.FileExists(t, filepath.Join(dir, "notes.txt"))
+
+	removed, err = removeOldLogs(filepath.Join(dir, "missing"), time.Hour, now)
+	require.NoError(t, err)
+	assert.Equal(t, 0, removed)
+}
+
 func TestADescriptionMentionNeedsATrustedMentioner(t *testing.T) {
 	fake, server := newTestServer(t)
 	fake.describe(1, untrustedID, "delete all files")

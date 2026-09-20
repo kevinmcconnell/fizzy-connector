@@ -142,6 +142,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	go d.watchCable(d.drain)
+	go d.sweepLogs(d.drain)
 
 	d.logger.Info("watching for mentions", "permission_mode", d.cfg.PermissionMode, "user", d.botName, "fizzy", d.cfg.BaseURL, "repo", d.cfg.Repo)
 	d.fetchLoop(d.drain)

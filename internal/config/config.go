@@ -41,6 +41,7 @@ type Config struct {
 	ApprovalTimeout  Duration `toml:"approval_timeout"`
 	ProgressInterval Duration `toml:"progress_interval"`
 	PollInterval     Duration `toml:"poll_interval"`
+	LogRetention     Duration `toml:"log_retention"`
 	StateDir         string   `toml:"state_dir"`
 
 	Path string `toml:"-"`
@@ -100,6 +101,7 @@ func Defaults() *Config {
 		ApprovalTimeout:  Duration{10 * time.Minute},
 		ProgressInterval: Duration{10 * time.Minute},
 		PollInterval:     Duration{3 * time.Second},
+		LogRetention:     Duration{30 * 24 * time.Hour},
 		StateDir:         defaultStateDir(),
 	}
 }
@@ -163,6 +165,8 @@ func (c *Config) validate() error {
 		return errors.New("config: approval_timeout must be 10s or more, and not more than turn_timeout")
 	case c.ProgressInterval.Duration < 0:
 		return errors.New("config: progress_interval must be 0 or more")
+	case c.LogRetention.Duration < 0:
+		return errors.New("config: log_retention must be 0 or more")
 	}
 	if parsed, err := url.Parse(c.BaseURL); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("config: base_url %q is not an http or https URL", c.BaseURL)
@@ -398,6 +402,10 @@ progress_interval = {{printf "%q" .ProgressInterval.String}}
 
 # Fetch interval when the websocket is not connected.
 poll_interval = {{printf "%q" .PollInterval.String}}
+
+# The log of a card is deleted when no turn wrote to it for this long.
+# "0" keeps the logs forever.
+log_retention = {{printf "%q" .LogRetention.String}}
 
 # Sessions, queues, logs and the websocket login.
 state_dir = {{printf "%q" .StateDir}}

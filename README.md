@@ -108,6 +108,9 @@ the next turn starts from the card content, and the old transcript stays on
 disk for `attach`.
 
 Logs of each turn are in `~/.local/state/fizzy-connector/<account>/logs/card-N.log`.
+A log is trimmed to 20 MB when it grows past that, and the daemon deletes a
+log that no turn wrote to for `log_retention` (30 days by default; "0" keeps
+the logs forever). The card state, with the session and the costs, stays.
 
 ## Security
 

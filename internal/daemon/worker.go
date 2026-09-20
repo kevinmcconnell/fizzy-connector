@@ -267,8 +267,12 @@ func fallbackReply(result claude.Result, runErr error, timeout time.Duration) st
 	return "I completed the turn, but I have no answer to post."
 }
 
+func (d *Daemon) logDir() string {
+	return filepath.Join(d.cfg.DataDir(), "logs")
+}
+
 func (d *Daemon) openLog(number int) (*os.File, error) {
-	dir := filepath.Join(d.cfg.DataDir(), "logs")
+	dir := d.logDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
