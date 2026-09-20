@@ -197,6 +197,11 @@ func TestAnEarlierResultIsNotTheAnswerOfAStoppedTurn(t *testing.T) {
 
 	assert.False(t, parsed.answeredAfterStop)
 
+	interrupted := stream + "\n" + `{"type":"result","result":"interrupted","is_error":true}`
+	parsed = parseStream(strings.NewReader(interrupted), io.Discard, 1, func() {})
+
+	assert.False(t, parsed.answeredAfterStop, "an error result is not an answer")
+
 	stream += "\n" + `{"type":"result","result":"second"}`
 	parsed = parseStream(strings.NewReader(stream), io.Discard, 1, func() {})
 

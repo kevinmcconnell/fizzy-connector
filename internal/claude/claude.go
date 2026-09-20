@@ -316,7 +316,7 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 			result.Text = ev.Result
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
-			if limitReached {
+			if limitReached && !ev.IsError && ev.Result != "" {
 				answeredAfterStop = true
 			}
 		}
