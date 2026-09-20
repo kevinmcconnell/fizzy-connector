@@ -256,8 +256,12 @@ func warningBefore(timeout time.Duration) time.Duration {
 func fallbackReply(result claude.Result, runErr error, timeout time.Duration, maxCost float64) string {
 	switch {
 	case errors.Is(runErr, claude.ErrCostLimit):
-		return fmt.Sprintf("The cost limit of $%.2f per turn stopped this turn after %d API calls, at an estimated $%.2f. "+
-			"Work that was committed or written to disk is kept. Mention me again to continue.", maxCost, result.Usage.APICalls, result.Usage.CostUSD)
+		estimate := ""
+		if result.Usage.CostUSD > 0 {
+			estimate = fmt.Sprintf(", at an estimated $%.2f", result.Usage.CostUSD)
+		}
+		return fmt.Sprintf("The cost limit of $%.2f per turn stopped this turn after %d API calls%s. "+
+			"Work that was committed or written to disk is kept. Mention me again to continue.", maxCost, result.Usage.APICalls, estimate)
 	case errors.Is(runErr, context.DeadlineExceeded):
 		return fmt.Sprintf("The turn timeout of %s stopped this turn after %d API calls. "+
 			"Work that was committed or written to disk is kept. Mention me again to continue.", timeout, result.Usage.APICalls)

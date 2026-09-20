@@ -37,4 +37,10 @@ func TestATurnOverTheCostLimitGetsAReplyThatSaysSo(t *testing.T) {
 	assert.Contains(t, reply, "cost limit of $100.00")
 	assert.Contains(t, reply, "54 API calls")
 	assert.Contains(t, reply, "estimated $101.50")
+
+	unpriced := claude.Result{Usage: claude.Usage{APICalls: 54}}
+	reply = fallbackReply(unpriced, err, 30*time.Minute, 100)
+
+	assert.Contains(t, reply, "after 54 API calls. ")
+	assert.NotContains(t, reply, "estimated")
 }
