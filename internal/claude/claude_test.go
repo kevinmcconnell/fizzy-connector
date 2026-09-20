@@ -66,6 +66,18 @@ func TestTheCostLimitStopsTheProcess(t *testing.T) {
 	assert.Less(t, time.Since(started), 30*time.Second, "the process kept the turn open")
 }
 
+func TestAnAnswerThatArrivesWithTheCostStopIsKept(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	expensive := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 100000)
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\necho '"+expensive+"'\necho '{\"type\":\"result\",\"result\":\"done\"}'\nsleep 300\n"), 0o755))
+
+	result, err := Turn{ClaudePath: script, Dir: dir, SessionID: "s", Log: io.Discard, MaxCostUSD: 1}.Run(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.Text)
+}
+
 func TestStartFailureIsReported(t *testing.T) {
 	_, err := Turn{ClaudePath: "/does/not/exist", Dir: t.TempDir(), Log: io.Discard}.Run(context.Background())
 

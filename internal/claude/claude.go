@@ -245,13 +245,14 @@ func (t Turn) Run(ctx context.Context) (Result, error) {
 	}
 	result.Usage = sumUsage(calls, parsedStream.resultCost)
 
-	if errors.Is(context.Cause(runCtx), ErrCostLimit) {
+	// An answer that arrived with the stop is an answer.
+	if errors.Is(context.Cause(runCtx), ErrCostLimit) && result.Text == "" {
 		return result, fmt.Errorf("turn stopped: %w", ErrCostLimit)
 	}
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("turn stopped: %w", ctx.Err())
 	}
-	if waitErr != nil && result.Text == "" {
+	if waitErr != nil && result.Text == "" && !errors.Is(context.Cause(runCtx), ErrCostLimit) {
 		return result, fmt.Errorf("claude: %w", waitErr)
 	}
 	return result, nil

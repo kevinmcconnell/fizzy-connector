@@ -68,7 +68,7 @@ func TestValidation(t *testing.T) {
 		"cost limit of NaN":       func(c *Config) { c.MaxCostPerTurn = math.NaN() },
 		"cost limit of Inf":       func(c *Config) { c.MaxCostPerTurn = math.Inf(1) },
 		"negative log retention":  func(c *Config) { c.LogRetention.Duration = -time.Hour },
-		"log retention in a turn": func(c *Config) { c.LogRetention.Duration = c.TurnTimeout.Duration / 2 },
+		"log retention in a turn": func(c *Config) { c.LogRetention.Duration = c.TurnTimeout.Duration },
 	}
 	require.NoError(t, testConfig(t).validate())
 	withEffort := testConfig(t)
