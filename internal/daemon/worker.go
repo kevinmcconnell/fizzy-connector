@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,10 +16,7 @@ import (
 	"github.com/kevinmcconnell/fizzy-connector/internal/store"
 )
 
-const (
-	retryDelay = 30 * time.Second
-	maxLogSize = 20 << 20
-)
+const retryDelay = 30 * time.Second
 
 // kick makes sure that one worker processes the queue of the card. The
 // worker lives as long as the daemon runs, not as long as the fetch that
@@ -291,9 +286,6 @@ func (d *Daemon) openLog(number int) (*os.File, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, fmt.Sprintf("card-%d.log", number))
-	if err := trimLog(path, maxLogSize); err != nil {
-		d.logger.Warn("log not trimmed", "card", number, "error", err)
-	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
@@ -304,38 +296,4 @@ func (d *Daemon) openLog(number int) (*os.File, error) {
 		return nil, err
 	}
 	return file, nil
-}
-
-// trimLog keeps the newest half of the limit when a log is larger than the
-// limit, and starts the kept part at a line start.
-func trimLog(path string, limit int64) error {
-	info, err := os.Stat(path)
-	if err != nil || info.Size() <= limit {
-		return nil
-	}
-
-	source, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	if _, err := source.Seek(-limit/2, io.SeekEnd); err != nil {
-		return err
-	}
-	reader := bufio.NewReader(source)
-	reader.ReadString('\n')
-
-	trimmed, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(trimmed, reader)
-	if closeErr := trimmed.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		os.Remove(path + ".tmp")
-		return err
-	}
-	return os.Rename(path+".tmp", path)
 }

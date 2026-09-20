@@ -352,23 +352,6 @@ func TestANotificationForADeletedCardIsDropped(t *testing.T) {
 	waitFor(t, "all notifications read", func() bool { return fake.unreadCount() == 0 })
 }
 
-func TestTrimLogKeepsTheNewestLines(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "card.log")
-	var content strings.Builder
-	for i := range 1000 {
-		fmt.Fprintf(&content, "line %04d\n", i)
-	}
-	require.NoError(t, os.WriteFile(path, []byte(content.String()), 0o600))
-
-	require.NoError(t, trimLog(path, 2000))
-
-	trimmed, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.LessOrEqual(t, len(trimmed), 1000)
-	assert.True(t, strings.HasPrefix(string(trimmed), "line 0"), "the log must start at a line start")
-	assert.True(t, strings.HasSuffix(string(trimmed), "line 0999\n"), "the log must keep the newest line")
-}
-
 func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
