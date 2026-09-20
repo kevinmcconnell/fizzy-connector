@@ -36,3 +36,12 @@ func priceOf(model string) price {
 	}
 	return price{}
 }
+
+// guardPrice is for the cost limit of a turn: a model that is not in the
+// table costs as much as the most expensive one, so that the limit holds.
+func guardPrice(model string) price {
+	if p := priceOf(model); p != (price{}) {
+		return p
+	}
+	return prices[0].price
+}

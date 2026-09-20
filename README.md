@@ -108,7 +108,9 @@ the next turn starts from the card content, and the old transcript stays on
 disk for `attach`.
 
 A turn is also stopped when its estimated cost goes over `max_cost_per_turn`
-($100 by default; 0 turns the limit off). The reply on the card says so.
+($100 by default; 0 turns the limit off). The reply on the card says so. For
+the limit, a model that has no price in the table costs as much as the most
+expensive one.
 
 Logs of each turn are in `~/.local/state/fizzy-connector/<account>/logs/card-N.log`.
 A log is trimmed to 20 MB when it grows past that, and the daemon deletes a

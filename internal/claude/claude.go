@@ -271,6 +271,13 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 	index := map[string]int{}
 	resultCost := 0.0
 	limitReached := false
+	guardEstimate := func() float64 {
+		estimate := 0.0
+		for _, c := range calls {
+			estimate += guardPrice(c.model).cost(c.tokens)
+		}
+		return max(estimate, resultCost)
+	}
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 0, 1<<20), 64<<20)
 	for scanner.Scan() {
@@ -300,7 +307,7 @@ func parseStream(input io.Reader, log io.Writer, limit float64, overLimit func()
 			result.IsError = ev.IsError
 			resultCost = max(resultCost, ev.CostUSD)
 		}
-		if limit > 0 && !limitReached && sumUsage(calls, resultCost).CostUSD > limit {
+		if limit > 0 && !limitReached && guardEstimate() > limit {
 			limitReached = true
 			overLimit()
 		}

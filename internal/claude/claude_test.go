@@ -152,6 +152,16 @@ func TestTheCostLimitStopsTheStreamOnce(t *testing.T) {
 	assert.Equal(t, 3, len(parsed.calls), "the stream is read to the end")
 }
 
+func TestTheCostLimitPricesAnUnknownModelAsTheMostExpensive(t *testing.T) {
+	stream := assistantEvent("m1", "claude-other-9", nil, 0, 0, 0, 1000)
+	stops := 0
+
+	parsed := parseStream(strings.NewReader(stream), io.Discard, 0.04, func() { stops++ })
+
+	assert.Equal(t, 1, stops, "1000 output tokens at the fable price are $0.05")
+	assert.Equal(t, 0.0, sumUsage(parsed.calls, parsed.resultCost).CostUSD, "the recorded cost has no estimate")
+}
+
 func TestNoCostLimitNeverStopsTheStream(t *testing.T) {
 	stream := assistantEvent("m1", "claude-fable-5-1", nil, 0, 0, 0, 1000000)
 
