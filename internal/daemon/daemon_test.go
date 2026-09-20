@@ -380,18 +380,26 @@ func TestRemoveOldLogsKeepsTheRecentOnes(t *testing.T) {
 	write("card-1.log", 31*24*time.Hour)
 	write("card-2.log", 29*24*time.Hour)
 	write("card-3.log.tmp", 31*24*time.Hour)
+	write("card-4.log", 31*24*time.Hour)
 	write("notes.txt", 31*24*time.Hour)
+	remove := func(card int, path string) (bool, error) {
+		if card == 4 {
+			return false, nil
+		}
+		return true, os.Remove(path)
+	}
 
-	removed, err := removeOldLogs(dir, 30*24*time.Hour, now)
+	removed, err := removeOldLogs(dir, 30*24*time.Hour, now, remove)
 	require.NoError(t, err)
 	assert.Equal(t, 1, removed)
 
 	assert.NoFileExists(t, filepath.Join(dir, "card-1.log"))
 	assert.FileExists(t, filepath.Join(dir, "card-2.log"))
 	assert.FileExists(t, filepath.Join(dir, "card-3.log.tmp"))
+	assert.FileExists(t, filepath.Join(dir, "card-4.log"), "the log of a running turn stays")
 	assert.FileExists(t, filepath.Join(dir, "notes.txt"))
 
-	removed, err = removeOldLogs(filepath.Join(dir, "missing"), time.Hour, now)
+	removed, err = removeOldLogs(filepath.Join(dir, "missing"), time.Hour, now, remove)
 	require.NoError(t, err)
 	assert.Equal(t, 0, removed)
 }
