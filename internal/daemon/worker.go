@@ -96,7 +96,6 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 	if err != nil {
 		return err
 	}
-	d.assignToSelf(ctx, card)
 
 	hops := 0
 	for _, item := range items {
@@ -111,6 +110,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 		return err
 	}
 	defer d.endTurn(token)
+	d.assignToSelf(ctx, card)
 
 	d.logger.Info("turn started", "card", number, "session", state.SessionID, "resume", state.SessionStarted)
 

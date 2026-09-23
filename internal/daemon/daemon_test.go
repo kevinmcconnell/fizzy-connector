@@ -53,6 +53,7 @@ type fakeFizzy struct {
 	reactions     []string
 	assignees     map[int][]string
 	assignments   int
+	failAssign    bool
 	members       []string
 	nextID        int
 }
@@ -213,6 +214,10 @@ func (f *fakeFizzy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(r.Body).Decode(&payload)
 		f.assignments++
+		if f.failAssign {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if i := slices.Index(f.assignees[number], payload.AssigneeID); i >= 0 {
 			f.assignees[number] = slices.Delete(f.assignees[number], i, i+1)
 		} else {
@@ -375,6 +380,18 @@ func TestATurnAssignsTheCardToClaudeOnce(t *testing.T) {
 	waitFor(t, "second answer on card 1", func() bool { return len(fake.botComments(1)) == 2 })
 	assignees, assignments = fake.assigneesOf(1)
 	assert.Equal(t, []string{trustedID, botID}, assignees, "the second turn unassigned Claude")
+	assert.Equal(t, 1, assignments)
+}
+
+func TestAFailedAssignmentDoesNotStopTheTurn(t *testing.T) {
+	fake, server := newTestServer(t)
+	fake.failAssign = true
+	fake.mention(1, trustedID)
+	startDaemon(t, server)
+
+	waitFor(t, "answer on card 1", func() bool { return len(fake.botComments(1)) == 1 })
+	assignees, assignments := fake.assigneesOf(1)
+	assert.Empty(t, assignees)
 	assert.Equal(t, 1, assignments)
 }
 
