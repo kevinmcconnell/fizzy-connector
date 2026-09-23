@@ -96,6 +96,7 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 	if err != nil {
 		return err
 	}
+	d.assignToSelf(ctx, card)
 
 	hops := 0
 	for _, item := range items {
@@ -163,6 +164,19 @@ func (d *Daemon) runTurn(ctx context.Context, number int) error {
 		return err
 	}
 	return d.deliverPendingReply(ctx, saved)
+}
+
+// assignToSelf only assigns: Fizzy has no endpoint that sets an assignee,
+// and a toggle on a card that has Claude removes it.
+func (d *Daemon) assignToSelf(ctx context.Context, card *fizzy.Card) {
+	for _, assignee := range card.Assignees {
+		if assignee.ID == d.cfg.BotUserID {
+			return
+		}
+	}
+	if err := d.client.ToggleAssignment(ctx, card.Number, d.cfg.BotUserID); err != nil {
+		d.logger.Warn("assign failed", "card", card.Number, "error", err)
+	}
 }
 
 // deliverPendingReply posts an answer that the daemon made for a turn. The
