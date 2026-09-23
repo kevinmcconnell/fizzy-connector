@@ -51,6 +51,9 @@ type fakeFizzy struct {
 	descriptions  map[int]string
 	notifications []fizzy.Notification
 	reactions     []string
+	assignees     map[int][]string
+	assignments   int
+	failAssign    bool
 	members       []string
 	nextID        int
 }
@@ -142,6 +145,7 @@ var (
 	cardPath     = regexp.MustCompile(`^/1/cards/(\d+)$`)
 	cardReaction = regexp.MustCompile(`^/1/cards/(\d+)/reactions$`)
 	commentsPath = regexp.MustCompile(`^/1/cards/(\d+)/comments$`)
+	assignPath   = regexp.MustCompile(`^/1/cards/(\d+)/assignments$`)
 	reactionPath = regexp.MustCompile(`^/1/cards/(\d+)/comments/(\w+)/reactions$`)
 	readingPath  = regexp.MustCompile(`^/1/notifications/(\w+)/reading$`)
 )
@@ -171,10 +175,14 @@ func (f *fakeFizzy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		var assignees []fizzy.User
+		for _, id := range f.assignees[number] {
+			assignees = append(assignees, fizzy.User{ID: id, Name: id})
+		}
 		respond(fizzy.Card{
 			Number: number, Title: "Card " + strconv.Itoa(number), Creator: fizzy.User{ID: trustedID},
 			Description: fizzy.PlainText(f.descriptions[number]), DescriptionHTML: f.descriptions[number],
-			Board: fizzy.Board{ID: "b1", Name: "Board"},
+			Board: fizzy.Board{ID: "b1", Name: "Board"}, Assignees: assignees,
 		})
 	case accessesPath.MatchString(path):
 		f.serveAccesses(w, r)
@@ -199,6 +207,23 @@ func (f *fakeFizzy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", path+"/"+created.ID+".json")
 		w.WriteHeader(http.StatusCreated)
 		respond(created)
+	case assignPath.MatchString(path):
+		number, _ := strconv.Atoi(assignPath.FindStringSubmatch(path)[1])
+		var payload struct {
+			AssigneeID string `json:"assignee_id"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		f.assignments++
+		if f.failAssign {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if i := slices.Index(f.assignees[number], payload.AssigneeID); i >= 0 {
+			f.assignees[number] = slices.Delete(f.assignees[number], i, i+1)
+		} else {
+			f.assignees[number] = append(f.assignees[number], payload.AssigneeID)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case cardReaction.MatchString(path):
 		f.reactions = append(f.reactions, "card")
 		w.WriteHeader(http.StatusCreated)
@@ -233,6 +258,7 @@ func newFakeFizzy() *fakeFizzy {
 	return &fakeFizzy{
 		comments:     map[int][]fizzy.Comment{},
 		descriptions: map[int]string{},
+		assignees:    map[int][]string{},
 		members:      []string{botID, trustedID, untrustedID},
 	}
 }
@@ -331,6 +357,42 @@ func TestRepliesGoToTheCardOfTheMention(t *testing.T) {
 	require.NotNil(t, resumed, "%s", log)
 	assert.Equal(t, string(started[1]), string(resumed[1]), "card 1 did not resume its own session")
 	assert.Len(t, fake.reactions, 3, "acknowledge reactions")
+}
+
+func (f *fakeFizzy) assigneesOf(card int) ([]string, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.assignees[card]), f.assignments
+}
+
+func TestATurnAssignsTheCardToClaudeOnce(t *testing.T) {
+	fake, server := newTestServer(t)
+	fake.assignees[1] = []string{trustedID}
+	fake.mention(1, trustedID)
+	startDaemon(t, server)
+
+	waitFor(t, "answer on card 1", func() bool { return len(fake.botComments(1)) == 1 })
+	assignees, assignments := fake.assigneesOf(1)
+	assert.Equal(t, []string{trustedID, botID}, assignees)
+	assert.Equal(t, 1, assignments)
+
+	fake.mention(1, trustedID)
+	waitFor(t, "second answer on card 1", func() bool { return len(fake.botComments(1)) == 2 })
+	assignees, assignments = fake.assigneesOf(1)
+	assert.Equal(t, []string{trustedID, botID}, assignees, "the second turn unassigned Claude")
+	assert.Equal(t, 1, assignments)
+}
+
+func TestAFailedAssignmentDoesNotStopTheTurn(t *testing.T) {
+	fake, server := newTestServer(t)
+	fake.failAssign = true
+	fake.mention(1, trustedID)
+	startDaemon(t, server)
+
+	waitFor(t, "answer on card 1", func() bool { return len(fake.botComments(1)) == 1 })
+	assignees, assignments := fake.assigneesOf(1)
+	assert.Empty(t, assignees)
+	assert.Equal(t, 1, assignments)
 }
 
 func TestAMentionIsNotLostBehindALaterEvent(t *testing.T) {

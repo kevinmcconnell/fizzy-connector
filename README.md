@@ -80,7 +80,8 @@ off.
 
 A `claude` process runs only for one turn. `max_concurrent` limits the processes, not the sessions:
 with a limit of 4 and mentions on 10 cards, 4 turns run and 6 cards wait in a
-queue. Each mention gets a 👀 reaction immediately. `turn_timeout` stops a turn
+queue. Each mention gets a 👀 reaction immediately. When a turn starts, Claude
+assigns the card to itself if it can. `turn_timeout` stops a turn
 that runs too long. Shortly before that, a tenth of the timeout and between
 two and ten minutes, Claude hears after each tool call when the turn ends, so
 that it commits the finished work and replies. When the stop comes anyway, the
